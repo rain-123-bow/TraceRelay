@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "TraceRelay"
+version = "1.0.0.dev0"
+description = "A Windows-local evidence relay that records registered application traffic as durable, independently verifiable artifacts."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "LicenseRef-Proprietary"
+dependencies = []
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tracerelay = [
+  "_build_identity.json",
+  "assets/v1/*.json",
+  "assets/v1/*.md",
+  "assets/v1/schemas/*.json",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+

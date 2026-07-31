@@ -1,0 +1,191 @@
+{
+  "schema_version": "tracerelay.wheelhouse_manifest.v1",
+  "authority": {
+    "implementation_snapshot_id": "tracerelay-plan-batch010-bf09efe561ad",
+    "implementation_manifest_sha256": "53c41b92f8374ee43cb67210b8d139f1d39a437b5a445c15046ca61dd254cbb9",
+    "resolution_reused_from_phase": "TR-I00",
+    "artifact_bytes_reverified_in_phase": "TR-I00R"
+  },
+  "resolved_at_utc": "2026-07-30T08:12:41.7092544Z",
+  "target": {
+    "implementation": "cp",
+    "python_version": "3.13",
+    "abi": "cp313",
+    "platform": "win_amd64"
+  },
+  "resolution_mode": "only_binary_no_runtime_dependencies",
+  "resolution_command": [
+    "python",
+    "-m",
+    "pip",
+    "download",
+    "--dest",
+    "<phase-artifact-wheelhouse>",
+    "--only-binary=:all:",
+    "--platform",
+    "win_amd64",
+    "--python-version",
+    "3.13",
+    "--implementation",
+    "cp",
+    "--abi",
+    "cp313",
+    "setuptools==83.0.0",
+    "build==1.5.0",
+    "pytest==9.1.1",
+    "hypothesis==6.163.0"
+  ],
+  "runtime_dependencies": [],
+  "artifacts": [
+    {
+      "name": "build",
+      "version": "1.5.0",
+      "filename": "build-1.5.0-py3-none-any.whl",
+      "bytes": 26018,
+      "sha256": "13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "direct",
+      "required_by": []
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "filename": "colorama-0.4.6-py2.py3-none-any.whl",
+      "bytes": 25335,
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "tags": [
+        "py2-none-any",
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "build==1.5.0",
+        "pytest==9.1.1"
+      ]
+    },
+    {
+      "name": "hypothesis",
+      "version": "6.163.0",
+      "filename": "hypothesis-6.163.0-cp313-cp313-win_amd64.whl",
+      "bytes": 658983,
+      "sha256": "b268211e625cd550e361fc387bf1db5deb1e9cae0ce4041116f0a0aafeef7c06",
+      "tags": [
+        "cp313-cp313-win_amd64"
+      ],
+      "role": "direct",
+      "required_by": []
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "filename": "iniconfig-2.3.0-py3-none-any.whl",
+      "bytes": 7484,
+      "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "pytest==9.1.1"
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.2",
+      "filename": "packaging-26.2-py3-none-any.whl",
+      "bytes": 100195,
+      "sha256": "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "build==1.5.0",
+        "pytest==9.1.1"
+      ]
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "filename": "pluggy-1.6.0-py3-none-any.whl",
+      "bytes": 20538,
+      "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "pytest==9.1.1"
+      ]
+    },
+    {
+      "name": "Pygments",
+      "version": "2.20.0",
+      "filename": "pygments-2.20.0-py3-none-any.whl",
+      "bytes": 1231151,
+      "sha256": "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "pytest==9.1.1"
+      ]
+    },
+    {
+      "name": "pyproject_hooks",
+      "version": "1.2.0",
+      "filename": "pyproject_hooks-1.2.0-py3-none-any.whl",
+      "bytes": 10216,
+      "sha256": "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "build==1.5.0"
+      ]
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "filename": "pytest-9.1.1-py3-none-any.whl",
+      "bytes": 386536,
+      "sha256": "37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "direct",
+      "required_by": []
+    },
+    {
+      "name": "setuptools",
+      "version": "83.0.0",
+      "filename": "setuptools-83.0.0-py3-none-any.whl",
+      "bytes": 1008090,
+      "sha256": "29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3",
+      "tags": [
+        "py3-none-any"
+      ],
+      "role": "direct",
+      "required_by": []
+    },
+    {
+      "name": "sortedcontainers",
+      "version": "2.4.0",
+      "filename": "sortedcontainers-2.4.0-py2.py3-none-any.whl",
+      "bytes": 29575,
+      "sha256": "a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0",
+      "tags": [
+        "py2-none-any",
+        "py3-none-any"
+      ],
+      "role": "transitive",
+      "required_by": [
+        "hypothesis==6.163.0"
+      ]
+    }
+  ]
+}

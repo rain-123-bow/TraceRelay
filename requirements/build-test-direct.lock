@@ -1,0 +1,7 @@
+# Direct build and test requirements confirmed by the implementation plan.
+# Authority: tracerelay-plan-batch010-bf09efe561ad.
+# Dependency pins are reused unchanged from TR-I00.
+setuptools==83.0.0
+build==1.5.0
+pytest==9.1.1
+hypothesis==6.163.0

@@ -1,0 +1,215 @@
+{
+  "schema_version": "tracerelay.plan.control_registry.v1",
+  "status": "normative_implementation_plan",
+  "requirement_authority": {
+    "snapshot_id": "tracerelay-req-b027-48e1910c4369",
+    "live_alarm_frame_profile_key": "monitor_and_alarm_limits.max_live_alarm_frame_bytes",
+    "alarm_observation_record_profile_key": "monitor_and_alarm_limits.max_alarm_observation_record_bytes"
+  },
+  "transport": {
+    "frame": "TRCP/1 from wire-format.v1.json",
+    "request_frame_kind": 2,
+    "response_frame_kind": 3,
+    "event_frame_kind": 4,
+    "maximum_request_bytes_profile_key": "service_limits.max_control_request_bytes",
+    "maximum_response_bytes_profile_key": "service_limits.max_control_response_bytes",
+    "authorization": "functional current-instance association: committed installation, current logon session, held peer PID plus PROCESS_CREATION_IDENTITY_FILETIME, service or monitor incarnation, one-use challenge, and request replay state; caller-supplied identity is never authoritative; default Windows access control and no hostile-user claim",
+    "challenge": "32 bytes generated per accepted pipe connection by BCryptGenRandom; copied into every request and response header; zero or mismatch rejects before dispatch",
+    "one_in_flight_request_per_connection": true,
+    "unknown_command_rule": "normalize through control_dispatch and reject with its exact first-match catalog reason",
+    "unknown_or_extra_field_rule": "reject before mutation"
+  },
+  "field_types": [
+    {"id": 1, "name": "application_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 2, "name": "registration_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 3, "name": "session_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 4, "name": "operation_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 5, "name": "target_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 6, "name": "target_type", "type": "U8", "max_bytes": 1, "enum": {"1": "SESSION", "2": "REGISTRATION", "3": "APPLICATION"}},
+    {"id": 7, "name": "application_metadata", "type": "BYTES", "max_bytes_profile_key": "service_limits.max_optional_metadata_bytes"},
+    {"id": 8, "name": "registration_metadata", "type": "BYTES", "max_bytes_profile_key": "service_limits.max_optional_metadata_bytes"},
+    {"id": 9, "name": "upstream_address", "type": "ASCII", "max_bytes": 15},
+    {"id": 10, "name": "upstream_port", "type": "U16", "max_bytes": 2},
+    {"id": 11, "name": "transport_profile", "type": "ASCII", "max_bytes": 64},
+    {"id": 12, "name": "proxy_address", "type": "ASCII", "max_bytes": 15},
+    {"id": 13, "name": "proxy_port", "type": "U16", "max_bytes": 2},
+    {"id": 14, "name": "session_credential", "type": "ASCII", "max_bytes": 43, "secret": true},
+    {"id": 15, "name": "reason_id", "type": "ASCII", "max_bytes": 128},
+    {"id": 16, "name": "result_class", "type": "U8", "max_bytes": 1},
+    {"id": 17, "name": "entity_state", "type": "U16", "max_bytes": 2},
+    {"id": 18, "name": "service_incarnation_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 19, "name": "monitor_incarnation_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 20, "name": "ready", "type": "BOOL", "max_bytes": 1},
+    {"id": 21, "name": "active_session_id", "type": "UUID16", "max_bytes": 16},
+    {"id": 22, "name": "activation_deadline_qpc", "type": "U64", "max_bytes": 8},
+    {"id": 23, "name": "qpc_frequency", "type": "U64", "max_bytes": 8},
+    {"id": 24, "name": "canonical_path", "type": "UTF8", "max_bytes": 32768},
+    {"id": 25, "name": "manifest_sha256", "type": "SHA256", "max_bytes": 32},
+    {"id": 26, "name": "confirmation_nonce", "type": "BYTES", "max_bytes": 32, "secret": true},
+    {"id": 27, "name": "continuation_token", "type": "BYTES", "max_bytes": 256},
+    {"id": 28, "name": "page_limit", "type": "U16", "max_bytes": 2},
+    {"id": 29, "name": "alarm_page", "type": "BYTES", "max_bytes_profile_key": "monitor_and_alarm_limits.max_alarm_query_payload_bytes"},
+    {"id": 30, "name": "alarm_event", "type": "BYTES", "max_bytes_profile_key": "monitor_and_alarm_limits.max_live_alarm_frame_bytes"},
+    {"id": 31, "name": "evaluation_complete", "type": "BOOL", "max_bytes": 1},
+    {"id": 32, "name": "operation_state", "type": "U8", "max_bytes": 1, "enum": {"1": "INSPECTED", "2": "ACCEPTED", "3": "RUNNING", "4": "SUCCEEDED", "5": "FAILED", "6": "UNKNOWN"}},
+    {"id": 33, "name": "target_exists", "type": "BOOL", "max_bytes": 1},
+    {"id": 34, "name": "target_deletable", "type": "BOOL", "max_bytes": 1},
+    {"id": 35, "name": "status_payload", "type": "BYTES", "max_bytes": 1048576},
+    {"id": 36, "name": "deadline_qpc", "type": "U64", "max_bytes": 8}
+  ],
+  "result_classes": {
+    "1": "SUCCESS",
+    "2": "ACCEPTED",
+    "3": "RUNNING",
+    "4": "FAILURE",
+    "5": "UNKNOWN"
+  },
+  "commands": [
+    {
+      "code": 1,
+      "name": "READINESS_STATUS",
+      "operation_catalog_key": "readiness_status",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [],
+      "request_optional": [],
+      "success_response_required": [15, 16, 18, 19, 20, 23, 31, 35],
+      "success_response_optional": [21]
+    },
+    {
+      "code": 2,
+      "name": "APPLICATION_CREATE",
+      "operation_catalog_key": "application_create",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [],
+      "request_optional": [7],
+      "success_response_required": [1, 15, 16, 17, 31],
+      "success_response_optional": []
+    },
+    {
+      "code": 3,
+      "name": "APPLICATION_DISABLE",
+      "operation_catalog_key": "application_disable",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [1],
+      "request_optional": [],
+      "success_response_required": [1, 15, 16, 17, 31],
+      "success_response_optional": []
+    },
+    {
+      "code": 4,
+      "name": "REGISTRATION_CREATE",
+      "operation_catalog_key": "registration_create",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [1, 9, 10, 11],
+      "request_optional": [8],
+      "success_response_required": [1, 2, 3, 12, 13, 14, 15, 16, 22, 23, 31],
+      "success_response_optional": [],
+      "secret_response_rule": "field 14 exists only in this command's first successful response, is written directly into the caller mutable buffer, and is forbidden in retry, event, diagnostic, status, or persistent schemas"
+    },
+    {
+      "code": 5,
+      "name": "SESSION_INSPECT",
+      "operation_catalog_key": "session_inspect",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [3],
+      "request_optional": [],
+      "success_response_required": [3, 15, 16, 17, 31, 35],
+      "success_response_optional": []
+    },
+    {
+      "code": 6,
+      "name": "SESSION_REVOKE",
+      "operation_catalog_key": "session_revoke",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [3],
+      "request_optional": [],
+      "success_response_required": [3, 15, 16, 17, 31],
+      "success_response_optional": []
+    },
+    {
+      "code": 7,
+      "name": "SESSION_CLOSE",
+      "operation_catalog_key": "session_close",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [3],
+      "request_optional": [],
+      "success_response_required": [3, 15, 16, 17, 31],
+      "success_response_optional": []
+    },
+    {
+      "code": 8,
+      "name": "SERVICE_STOP",
+      "operation_catalog_key": "service_stop",
+      "deadline_profile_key": "control_deadlines_ms.stop_command_response",
+      "request_required": [],
+      "request_optional": [],
+      "success_response_required": [15, 16, 31],
+      "success_response_optional": [3, 17]
+    },
+    {
+      "code": 9,
+      "name": "ALARM_QUERY",
+      "operation_catalog_key": "alarm_query",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [28],
+      "request_optional": [27],
+      "success_response_required": [15, 16, 29, 31],
+      "success_response_optional": [27],
+      "bounds": "page_limit is 1..monitor_and_alarm_limits.alarm_query_page_records; serialized page must satisfy both alarm page and control response limits"
+    },
+    {
+      "code": 10,
+      "name": "ALARM_SUBSCRIBE",
+      "operation_catalog_key": "alarm_subscribe",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [],
+      "request_optional": [],
+      "success_response_required": [15, 16, 31],
+      "success_response_optional": [],
+      "stream_event_code": 100
+    },
+    {
+      "code": 11,
+      "name": "DELETE_INSPECT",
+      "operation_catalog_key": "delete_inspect",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [5, 6],
+      "request_optional": [],
+      "success_response_required": [5, 6, 15, 16, 24, 25, 26, 33, 34, 36, 31],
+      "success_response_optional": [],
+      "nonce_rule": "field 26 is returned once, retained only as a service-memory digest, and expires at control_deadlines_ms.delete_confirmation_expiry"
+    },
+    {
+      "code": 12,
+      "name": "DELETE_SUBMIT",
+      "operation_catalog_key": "delete_submit",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [5, 6, 24, 25, 26],
+      "request_optional": [],
+      "success_response_required": [4, 5, 6, 15, 16, 32, 31],
+      "success_response_optional": []
+    },
+    {
+      "code": 13,
+      "name": "DELETE_STATUS",
+      "operation_catalog_key": "delete_status",
+      "deadline_profile_key": "control_deadlines_ms.control_request",
+      "request_required": [4],
+      "request_optional": [],
+      "success_response_required": [4, 15, 16, 32, 31],
+      "success_response_optional": [5, 6]
+    }
+  ],
+  "events": [
+    {
+      "code": 100,
+      "name": "LIVE_ALARM_EVENT",
+      "required": [18, 19, 30],
+      "optional": [3],
+      "ordering": "monitor incarnation, alarm sequence, alarm ID",
+      "credential_fields_forbidden": [14, 26]
+    }
+  ],
+  "common_response_rule": "Every response contains one catalog reason_id, one result_class, and evaluation_complete. A command-specific success shape is legal only for its positive catalog tuple. Non-positive responses contain only fields 15, 16, and 31 plus request-correlating IDs declared required by that command.",
+  "version_evolution": "IDs, names, field meanings, required sets, and maximum sizes are immutable for 1.0. Any change requires a reviewed plan amendment and new golden vectors."
+}

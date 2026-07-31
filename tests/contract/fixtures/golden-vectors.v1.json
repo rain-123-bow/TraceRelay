@@ -1,0 +1,274 @@
+{
+  "schema_version": "tracerelay.plan.golden_vectors.v1",
+  "status": "normative_implementation_plan",
+  "generation_rule": "Every digest is lowercase SHA-256 over the exact encoded bytes. Domain strings include one terminal NUL before the encoded bytes where the bound wire schema requires it.",
+  "requirement_owned_vector_families": {
+    "authority": {
+      "snapshot_id": "tracerelay-req-b027-48e1910c4369",
+      "manifest_sha256": "9f747ab101e7e1d20a9c0c6bc7c2b736921073c71058069fc534793fe73e260e",
+      "normative_contracts_sha256": "33ba2ff66e8b432ab09952cc10873947b921b3f8efec92beb93394febaecdc5f"
+    },
+    "required_valid_vectors": [
+      "TRFW/1 exact 44-byte witness and full-witness digest",
+      "TRII/1 attempts a0 and a1",
+      "TRIC/1 sequence zero plus chained TRIM/1 sequence one",
+      "TRBH/1 service then monitor identity, final-handle, and close sequences with four mutually distinct challenges and one exact pending-TRIM inventory",
+      "32-byte mapping header RUNNING and deterministic recovery FREEZE_REQUESTED/FROZEN states plus normal-transition and recovery-normalization relations",
+      "TRAD/1 persistent initial and live terminal",
+      "TRAF/1 ALARM_FIRST_ATTEMPT and ALARM_CHANNELS_TERMINAL",
+      "TRAO/1 each variant 1 through 9 with every legal conditional presence row",
+      "TRAR/1 each recovery variant and complete 4108-record recovery chain",
+      "TRAS/1 every one of 12 states and every legal transition",
+      "TRBM/1 five-file bundle with TRAO/1 variant selectors 1 through 9"
+    ],
+    "representative_return_vectors": [
+      "persistent RETURNED_UNVERIFIED to VERIFIED inline before deadline",
+      "persistent returned file reference verified before deadline",
+      "live returned inline verified before deadline",
+      "returned result validation rejected",
+      "initial call return or validation exactly at deadline",
+      "initial late return",
+      "terminal no validated result by deadline",
+      "terminal late return after timeout",
+      "persistent and live PREDISPATCH_FAILED_LIMIT",
+      "recovery unproven with available and unavailable slot identity"
+    ],
+    "mandatory_mutations": [
+      "TRAD length, digest, UTF-8, catalog ordinal/ID, channel, emission and padding",
+      "TRAO variant/presence, success-only artifact, return/validation time, deadline, body mode, dispatch, reference, result identity and padding",
+      "TRAF path, containment, identity, range, record kind, target kind, target length, target digest, sequence, previous digest, commit-trailer digest and padding",
+      "TRAS state, epoch, mapping/worker/operation/alarm/call binding, payload length/digest and forbidden transition",
+      "TRFW absent, each partial length 1 through 43, malformed, second write and prior-byte rewrite",
+      "TRR1 exact kind-400/kind-401 header, canonical field table, record digest, trailer and witness relations",
+      "TRAR sequence, previous digest, inventory, seal, release, resolution and completion relations",
+      "TRBH kind, role, phase, counts, incarnation, challenge, PID, logon session, creation identity, authority hashes, inventory, digest, ordering, close sequence, padding, short/zero/error/early-EOF behavior",
+      "mapping header state, reserved word, generation, active count, sequence parity, alignment, transition order, freeze ownership, crash normalization, and irreversible FROZEN state",
+      "TRBM physical-file count/length/hash, logical-role count, selector count/role/range/hash, manifest digest and trailer",
+      "one tick before, at and after every exclusive alarm deadline"
+    ],
+    "required_semantic_checker_ids": [
+      "TRII/1",
+      "TRIC/1",
+      "TRIM/1",
+      "TRBH/1",
+      "MAPPING_HEADER/1",
+      "TRFW/1",
+      "TRAD/1",
+      "TRAF/1",
+      "TRAO/1",
+      "TRAS/1",
+      "TRR1",
+      "TRAR/1",
+      "TRBM/1"
+    ],
+    "required_exclusive_deadline_ids": [
+      "AI_GLOBAL",
+      "AI_P",
+      "AI_L",
+      "OI_P",
+      "OI_L",
+      "AT_P",
+      "AT_L",
+      "OT_P",
+      "OT_L",
+      "TC_P",
+      "TC_L"
+    ],
+    "required_mandatory_mutation_categories": [
+      {
+        "category": "CALL_RETURN",
+        "mutation_ids": ["M-TRAO-CALL-RETURN-AT-DEADLINE"]
+      },
+      {
+        "category": "VALIDATION",
+        "mutation_ids": ["M-TRAO-VALIDATION-AT-DEADLINE"]
+      },
+      {
+        "category": "RESULT_IDENTITY_POSITION",
+        "mutation_ids": ["M-TRAO-RESULT-IDENTITY-POSITION"]
+      },
+      {
+        "category": "RESULT_IDENTITY_DIGEST",
+        "mutation_ids": ["M-TRAO-RESULT-IDENTITY-DIGEST"]
+      },
+      {
+        "category": "TRAS_EPOCH_STABLE_NON_ACKED_EMPTY",
+        "mutation_ids": ["M-TRAS-EPOCH-ADVANCED-OUTSIDE-ACKED-EMPTY"]
+      },
+      {
+        "category": "TRAS_EPOCH_INCREMENT_ACKED_EMPTY",
+        "mutation_ids": ["M-TRAS-ACKED-EMPTY-EPOCH-NOT-ADVANCED"]
+      }
+    ],
+    "required_semantic_operation_probe_mutations": [
+      "M-TRBM-EXPECTED-CLASSIFICATION-METADATA-TAMPER",
+      "M-TRFW-SECOND-WRITE",
+      "M-TRFW-PRIOR-BYTE-REWRITE"
+    ],
+    "generation_gate": "production writer, independent verifier codec, and test oracle independently generate byte-identical valid bytes and identical mutation classifications using only the frozen batch-027 requirements plus this plan; no implementation source is shared"
+  },
+  "u001_frozen_corpus": {
+    "status": "FROZEN_PLAN_ARTIFACT_PENDING_INDEPENDENT_REVIEW",
+    "runtime_schema_set": {
+      "source": "SCHEMA_HASHES.json runtime_schema_set",
+      "ordered_file_count": 6,
+      "sha256": "479f9667c3e0dfab4ce8bb43f1cd62ec17fdf3bbe63106daa088c6eee0d20dcb",
+      "trbm_field": 10
+    },
+    "corpus": {
+      "path": "fixtures/u001-corpus.v1.bin",
+      "bytes": 17699707,
+      "sha256": "aa0765075a76ee84f223382314ec7186cd873cbf6bc28e7ba007a5e2675d8ef0"
+    },
+    "manifest": {
+      "path": "fixtures/u001-corpus-manifest.v1.json",
+      "bytes": 20562270,
+      "sha256": "062c4ef789c88b72fdf2a2811538617e87217a628c46ecdb8b4a18ceb91b5a32",
+      "schema_version": "tracerelay.plan.u001_fixture_corpus.v1"
+    },
+    "deterministic_generator": {
+      "path": "tools/generate_u001_fixtures.py",
+      "bytes": 210625,
+      "sha256": "1bb5c35b38d5257a6f52683bbe3d7820507c0dc8063bd470c8e5ec52dfb8bfbc",
+      "inputs": "only constants and algorithms frozen in the generator and fixture manifest; no random source, wall clock, environment value, filesystem enumeration, user input, or implementation-selected seed",
+      "reproduction_command": "python tools/generate_u001_fixtures.py --check",
+      "scope": "plan-authoring provenance only; forbidden as production writer, verifier, parser, oracle, fixture builder, or imported implementation dependency"
+    },
+    "independent_semantic_verifier": {
+      "path": "tools/verify_u001_fixtures.ps1",
+      "bytes": 141266,
+      "sha256": "15b14a9c9ff5b5926414ee4912896313985f27756295cee5c3e79a60203fced9",
+      "command": "pwsh -NoProfile -File tools/verify_u001_fixtures.ps1",
+      "required_engine": "PowerShell 7.x (Core); other PowerShell editions and major versions are outside the supported and acceptance scope",
+      "independence": "PowerShell implementation; does not invoke, import, translate, or share codec functions with the Python generator",
+      "checks": [
+        "every indexed byte range, length, SHA-256, ID, and expected classification",
+        "thirteen exact semantic checkers: TRII/1, TRIC/1, TRIM/1, TRBH/1, MAPPING_HEADER/1, TRFW/1, TRAD/1, TRAF/1, TRAO/1, TRAS/1, TRR1, TRAR/1, and TRBM/1",
+        "the exact ten-frame TRBH/1 service/monitor identity, final-handle, and close sequence; four distinct challenges; pending-TRIM inventory equality; derived ACKs; zero padding; 8-to-0 bootstrap handle closure; and holder-proof constants",
+        "the exact 32-byte mapping header, three stable states, state/generation/parity relations, slot-offset equation, closed normal protocol, recovery protocol, and forbidden normalization/thaw cases",
+        "every exact assertion has a valid execution and at least one materialized semantic field probe bound to base bytes, patch preimages, offsets, result SHA-256, checker ID, assertion ID, and rejection classification",
+        "TRAF kind 1 targets TRR1 kind 400; TRAF kind 2 targets TRR1 kind 401; all target and commit-trailer relations are recomputed",
+        "valid TRBM/1 recovers exactly five physical files, four listed non-manifest files, six logical roles, seven selectors, TRAO variants 1 through 9, and linkage kind 409; parsed files, selectors, selected records, and digest chains must exactly match the frozen bundle-definition metadata",
+        "all TRAO/1 variants and every closed conditional presence row",
+        "all twelve TRAS/1 states, all 22 legal transitions, epoch rule, and a forbidden-transition counterexample",
+        "all witness prefixes 1 through 43 plus absent, valid, malformed, second-write, and prior-byte-rewrite outcomes",
+        "the byte-exact 4,108-record TRAR/1 chain, sequence, previous digest, unavailable inventory, seal, release, 2,052 resolutions, and completion binding",
+        "every required mutation category is an exact set and every mutated result is executed by its named semantic checker",
+        "AI_GLOBAL, AI_P, AI_L, OI_P, OI_L, AT_P, AT_L, OT_P, OT_L, TC_P, and TC_L each have exactly before/at/after cases at deadline-1/deadline/deadline+1",
+        "deleting or changing any checker, assertion, semantic probe, mandatory category, deadline case, expected classification, runtime schema digest, bundle file declaration, or bundle selector declaration makes validation fail"
+      ]
+    },
+    "closed_counts": {
+      "stored_vectors": 89,
+      "fixture_files": 6,
+      "byte_patch_mutations": 195,
+      "operation_mutations": 3,
+      "tras_transition_cases": 23,
+      "trfw_partial_witness_cases": 43,
+      "traf_target_relations": 4,
+      "trao_file_reference_relations": 10,
+      "trbm_bundle_fixtures": 1,
+      "trbh_bootstrap_sequences": 1,
+      "mapping_header_relations": 1,
+      "deadline_identities": 11,
+      "deadline_cases": 33,
+      "external_deadline_fixtures": 6,
+      "semantic_checkers": 13,
+      "semantic_assertions": 141,
+      "semantic_field_probe_mutations": 195,
+      "semantic_operation_probe_mutations": 3,
+      "mandatory_mutation_categories": 6,
+      "tras_states": 12,
+      "tras_legal_transitions": 22,
+      "tras_forbidden_transition_cases": 1,
+      "trao_variants": 9,
+      "trao_required_conditional_presence_cases": 35,
+      "trfw_partial_prefix_cases": 43,
+      "trar_complete_chain_records": 4108
+    },
+    "coverage": [
+      "persistent and live returned success",
+      "persistent returned file reference verified strictly before deadline",
+      "returned failure without fabricated success",
+      "returned validation rejection",
+      "eleven named exclusive alarm deadlines, each at one tick before, exactly at, and one tick after",
+      "initial late return, terminal timeout, and terminal late return",
+      "persistent and live predispatch limits with full slot census",
+      "recovery-unproven with available, unavailable, operation-only, complete-worker-tuple, known-session, and session-unknown inventory rows",
+      "alarm-envelope admission limit",
+      "TRAD length/digest/UTF-8/catalog/channel/emission/padding mutations",
+      "TRAF path/containment/identity/range/kind/length/digest/padding mutations",
+      "TRAO variant/presence/success-only artifact/call-return/validation/deadline/body-mode/dispatch/reference/result-identity/padding/digest mutations",
+      "TRAS state/epoch/mapping/worker/operation/alarm/call/payload-length/payload-digest/forbidden-transition mutations",
+      "TRFW absent/partial/valid/malformed/second-write/prior-byte-rewrite mutations",
+      "TRR1 kind/header/field/digest/trailer/witness mutations",
+      "TRAR sequence/previous-digest/inventory/seal/release/resolution/completion mutations",
+      "TRBH frame/header/kind/role/phase/count/challenge/process/authority/payload/inventory/padding mutations and exact cross-frame sequence",
+      "mapping-header state/reserved/generation/count/sequence mutations plus normal/recovery protocol relations",
+      "TRBM file-count/file-length/file-hash/role-count/selector-count/selector-role/selector-range/selector-hash/digest/trailer mutations"
+    ],
+    "i02_execution_boundary": "I02 consumes these exact fixtures and independently reimplements production writer, verifier codec, and third oracle. It may calculate and compare frozen bytes but may not select a fixture field, ID, QPC, ordinal, body, padding, mutation offset, expected classification, or golden byte."
+  },
+  "vectors": [
+    {
+      "id": "TLV-U8-001",
+      "format": "TLV",
+      "description": "field 1, type U8, flags 0, one-byte value 0x7f",
+      "bytes": 9,
+      "encoded_hex": "01000100010000007f",
+      "sha256": "a15f8da276d42ac0d7bbdc33b6a5bdadfa3c5b50c62b1156933e13db2c1aea32"
+    },
+    {
+      "id": "TRCP-CHALLENGE-001",
+      "format": "TRCP/1",
+      "description": "challenge frame, zero request ID, incarnation 000102..0f, challenge 000102..1f, no fields",
+      "bytes": 128,
+      "encoded_hex": "5452435001000000010000000000000060000000800000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000e796b7c9cb4f6f3506c38fae7fb55a20aed5cf31cb2fd1d66b8be674e41207be",
+      "sha256": "cab72c10609cb76c3029dd291dc1f2def290d768dacfdc662d611833d4cd00a9"
+    },
+    {
+      "id": "TRWP-BOOTSTRAP-001",
+      "format": "TRWP/1",
+      "description": "semantically valid transport-worker BOOTSTRAP with one exact parent-process handle-manifest entry",
+      "bytes": 188,
+      "encoded_hex": "5452575001000000040005000100000080000000bc00000001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01000000000000000200000000000000000000000100080014000000010000000100000000001000000100000000000038c2af29ccb906574412bf69561167addb287f47ec36eefef37d3a773dad93e0",
+      "sha256": "a78d07c9db2dad3ea50d59eb6a517aff9b04009223a62f5f1039c926d7c64bbc"
+    },
+    {
+      "id": "TRJF-PROLOGUE-001",
+      "format": "TRJF/1",
+      "description": "installation catalog prologue with deterministic identities and 0x11/0x22/0x33 binding digests",
+      "bytes": 288,
+      "encoded_hex": "54524a46010000000100000020010000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000000000000000000000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f000000000000000000000000000000001111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333330100000000000000809698000000000000000000000000000000000000000000000000000000000000000000000000008935295cdafabe54cf7798f27083c46b3707b233022eda97a31e0ea21a550247",
+      "sha256": "cc0cd45030de0056c6ab952eadbab3f2a2684da0354ac141a2813259cf27f863"
+    },
+    {
+      "id": "TRR1-CATALOG-OPEN-DRAFT3-MUTATION-001",
+      "format": "TRR1",
+      "description": "retained draft.3 bytes; invalid under draft.4 because total length omits the mandatory 44-byte TRFW/1 block",
+      "expected_classification": "WITNESS_ABSENT_AND_TOTAL_LENGTH_MISMATCH",
+      "bytes": 456,
+      "encoded_hex": "54525231010000000100650000000000c8010000a00006000100000000000000020000000000000080969800000000000000000000000000d00000000000000000000000000000000000000000000000000000000000000000000000000000004dabae7e11b88d509343fc50f5fda92b673798037d5c8db189b6a9b2833830b100000000000000000000000000000000202122232425262728292a2b2c2d2e2f0100060010000000000102030405060708090a0b0c0d0e0f0700060010000000101112131415161718191a1b1c1d1e1f180007002000000011111111111111111111111111111111111111111111111111111111111111111a0007002000000022222222222222222222222222222222222222222222222222222222222222221b000700200000003333333333333333333333333333333333333333333333333333333333333333580007002000000044444444444444444444444444444444444444444444444444444444444444448fae6c907e3cc30107f58562b372239df42569c0c7576a87349aa670e70c253f54524331010000000100000000000000c8010000000000008fae6c907e3cc30107f58562b372239df42569c0c7576a87349aa670e70c253f",
+      "sha256": "74252c558d7e2deb056350d4edbfd1dff6cd8ec8758e4acb27d7392bb0fb2067"
+    },
+    {
+      "id": "TRBM-SESSION-DRAFT3-MUTATION-001",
+      "format": "TRBM/1",
+      "description": "retained draft.3 bytes; invalid under draft.4 because logical-role 5 selects withdrawn numeric kinds 402 through 408 instead of TRAO/1 variants 1 through 9",
+      "expected_classification": "WITHDRAWN_ALARM_OBSERVATION_SELECTOR",
+      "bytes": 903,
+      "encoded_hex": "5452424d01000000400000008703000011000000000102030405060708090a0b0c0d0e0f303132333435363738393a3b3c3d3e3f0000000000000000000000000100060010000000000102030405060708090a0b0c0d0e0f0200060010000000101112131415161718191a1b1c1d1e1f0300060010000000202122232425262728292a2b2c2d2e2f04000800080000000001020304050607050008001000000008090a0b0c0d0e0f1011121314151617060009002300000077696e646f777331312d6e7466732d6c6f63616c2d627974652d73747265616d2d7631070007002000000011111111111111111111111111111111111111111111111111111111111111110800090005000000312e372e30090007002000000022222222222222222222222222222222222222222222222222222222222222220a0007002000000033333333333333333333333333333333333333333333333333333333333333330b000900150000004c4f43414c5f4c4f4f504241434b5f5443505f56310c00090010000000547261636552656c61792d312e302e300d00090028000000616161616161616161616161616161616161616161616161616161616161616161616161616161610e0004000800000001000000000000000f000400080000008096980000000000100008001a01000004000000010000002500000001000000000000000101010101010101010101010101010101010101010101010101010101010101737570706f72742d70726f66696c652e77696e646f77732d6c6f63616c2d76312e6a736f6e020000001b00000002000000000000000202020202020202020202020202020202020202020202020202020202020202726561736f6e2d657869742d636174616c6f672e76312e6a736f6e030000000b00000003000000000000000303030303030303030303030303030303030303030303030303030303030303736572766963652e74726a040000000b000000040000000000000004040404040404040404040404040404040404040404040404040404040404046d6f6e69746f722e74726a1100080048000000070000000100010001000000020002000100000003000300010000000400040001000000050003000201000092019801050004000201000092019801060003000201000099019901e89e471b39ec73cf6e1e01f56cb9da4785b7fc68574e966f2b2885f841cd018254424d4387030000e89e471b39ec73cf",
+      "sha256": "38ab2e3f44f5010303f48f8b474b17211912f4384e75e3f73051885046bb5531"
+    },
+    {
+      "id": "REPORT-INPUT-ERROR-001",
+      "format": "tracerelay.verification_report.v1",
+      "description": "canonical one-line LF-terminated INPUT_ERROR report for missing input",
+      "bytes": 2896,
+      "encoded_utf8": "{\"schema_version\":\"tracerelay.verification_report.v1\",\"result_class\":\"INPUT_ERROR\",\"exit_code\":64,\"authoritative\":false,\"evaluation_complete\":false,\"input\":{\"canonical_path\":\"C:\\\\missing\",\"preflight_accepted\":false,\"logical_bytes\":0,\"files\":0,\"directory_entries\":0},\"identity\":{\"installation_id\":null,\"logical_bundle_id\":null,\"session_id\":null,\"service_incarnation_id\":null,\"monitor_incarnation_id\":null,\"origin_volume_identity\":null,\"origin_directory_file_identity\":null,\"profile_id\":null,\"profile_sha256\":null,\"catalog_version\":null,\"catalog_sha256\":null,\"schema_sha256\":null,\"transport_profile\":null},\"scope\":{\"observed_boundary\":\"LOCAL_LOOPBACK_TCP_V1_PROXY_BOUNDARY\",\"remote_application_receipt_claimed\":false},\"assurance\":{\"supported_failure_model\":[],\"exclusions\":[]},\"structure\":{\"committed_record_count\":0,\"final_committed_digest\":null,\"partial_tail_bytes\":0,\"sequence_complete\":false},\"terminal\":{\"state\":\"ABSENT\",\"reason_id\":\"TR-INPUT-PATH\",\"clean_predicates\":{}},\"monitoring\":{\"state\":\"ABSENT\",\"last_service_position\":null,\"last_monitor_position\":null},\"alarms\":{\"linked_count\":0,\"publication_proven\":false,\"unproven_count\":0,\"initial_outcome_counts\":{},\"terminal_outcome_counts\":{}},\"byte_accounting\":{\"client_to_upstream\":{\"observed_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},\"os_accepted_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},\"unknown_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}},\"upstream_to_client\":{\"observed_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},\"os_accepted_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"},\"unknown_ranges\":{\"range_count\":0,\"total_bytes\":0,\"first_offset\":null,\"last_offset_exclusive\":null,\"digest_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}}},\"reason_counts\":[{\"priority\":100,\"reason_id\":\"TR-INPUT-PATH\",\"class\":\"INPUT_ERROR\",\"count\":1}],\"sequence_issues\":[],\"issue_details\":[],\"truncation\":{\"reason_counts\":{\"truncated\":false,\"emitted_entries\":1,\"omitted_entries\":0,\"emitted_bytes\":78,\"budget_bytes\":1048576},\"sequence_issues\":{\"truncated\":false,\"emitted_entries\":0,\"omitted_entries\":0,\"emitted_bytes\":2,\"budget_bytes\":4194304},\"issue_details\":{\"truncated\":false,\"emitted_entries\":0,\"omitted_entries\":0,\"emitted_bytes\":2,\"budget_bytes\":10485760},\"report_bytes\":2896}}\n",
+      "sha256": "16ad4cd249385db46ef1201cb6f959c7b8042caf236f2657b95b2cb0567018e7"
+    }
+  ],
+  "validation_rule": "The seven inline legacy vectors and the bound U-001 binary corpus are both normative. A conforming writer, verifier codec, and independent test oracle must each reproduce every indexed byte/hash, return every frozen classification, and cover every manifest-required family without importing the plan generator or code from either other implementation. Token presence is not coverage evidence. Generated batch-027 vectors must match the exact requirement-owned framing, bootstrap, mapping-header, presence, witness, state, deadline, and semantic rules.",
+  "version_evolution": "Any changed vector byte or hash is a normative plan change requiring a new reviewed snapshot."
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "tracerelay.build_identity.v1",
+  "package_version": "1.0.0.dev0",
+  "source_commit": null,
+  "source_repository_state": "UNBORN_MAIN_NO_COMMIT",
+  "python_target": "CPython 3.13",
+  "platform_target": "Windows 11 x64",
+  "requirement_snapshot_id": "tracerelay-req-b027-48e1910c4369",
+  "requirement_manifest_sha256": "9f747ab101e7e1d20a9c0c6bc7c2b736921073c71058069fc534793fe73e260e",
+  "implementation_snapshot_id": "tracerelay-plan-batch010-bf09efe561ad",
+  "implementation_manifest_sha256": "53c41b92f8374ee43cb67210b8d139f1d39a437b5a445c15046ca61dd254cbb9",
+  "runtime_schema_set_sha256": "479f9667c3e0dfab4ce8bb43f1cd62ec17fdf3bbe63106daa088c6eee0d20dcb",
+  "review_schema_set_sha256": "2c412b4b08f6780fdd697775e4c578f0317977299b1dde052409a25431f84665",
+  "build_test_lock_sha256": "34ba47b6ffb3f2c8344bfaca78fec74f0bc5a75616578edd414f6ac702ddc9ab"
+}
