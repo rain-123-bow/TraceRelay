@@ -1,7 +1,6 @@
 """TraceRelay package identity.
 
-TR-I00 intentionally exposes no recorder, service, proxy, or CLI behavior.
+The runtime is introduced by the minimal v1 implementation milestones.
 """
 
 __version__ = "1.0.0.dev0"
-

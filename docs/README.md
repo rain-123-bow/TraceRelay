@@ -1,21 +1,14 @@
-# TraceRelay design checkpoints
+# TraceRelay design
 
-This directory stores versioned, reviewable design results inside the source
-repository.
+Current v1 design:
 
-| Result | State | Entry point |
-|---|---|---|
-| Requirement design batch-028 | Independent review `PASS`; final user promotion pending | `requirements/batch-028/REQUIREMENT_DESIGN.md` |
-| Implementation plan batch-010 | Historically user-confirmed against requirement batch-027; amendment required before implementation | `implementation-plan/batch-010/IMPLEMENTATION_PLAN.md` |
+- `v1/REQUIREMENTS.md`
+- `v1/IMPLEMENTATION_PLAN.md`
+- `v1/DESIGN_REVIEW.md`
 
-Read each directory's `STATUS.md` before using its contents. A copied document
-does not change its authority state.
+The active design targets one trusted Windows user, one local TCP session, one
+durable evidence journal, one monitor, and one read-only verifier.
 
-The requirement candidate and implementation plan deliberately remain separate:
-
-- batch-028 closes `CPO-001` through private overlapped named pipes;
-- batch-010 predates that change and does not yet contain the accepted
-  `CPO-001`, `WA-001`, or `WA-002` resolutions;
-- batch-011 must reconcile those decisions and pass its own frozen review and
-  user-confirmation gates before implementation resumes.
-
+The former high-assurance design remains available in Git commit
+`f816dcb851d0ff38ec8f4d21a10c5317ba04ade8`. It is not present in the current
+tree and does not constrain v1 implementation.

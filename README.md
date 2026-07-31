@@ -6,10 +6,18 @@ later independent verification.
 
 ## Current implementation status
 
-`1.0.0.dev0` contains only the TR-I00 repository and immutable-contract
-bootstrap. It does not yet expose a service, proxy, command-line interface, or
-evidence recorder. Runtime behavior starts in later phases of the confirmed
-implementation plan.
+The runtime is not implemented yet. The former full-assurance design has been
+retired because it exceeded the needs of the first usable version.
+
+Current design:
+
+- `docs/v1/REQUIREMENTS.md`
+- `docs/v1/IMPLEMENTATION_PLAN.md`
+- `docs/v1/DESIGN_REVIEW.md`
+
+The repository baseline has been reset to the minimal v1 design. Runtime
+implementation starts at milestone M1; no service, proxy, recorder, or CLI is
+available yet.
 
 ## Supported target
 
@@ -18,7 +26,5 @@ implementation plan.
 - PowerShell 7.x Core for repository gates
 - no third-party runtime dependency
 
-The package includes byte-exact copies of the confirmed requirement assets and
-the six runtime schemas. `tests/contract` independently checks their hashes,
-schema-set identity, dependency boundary, source ownership, and import rules.
-
+The first version supports one trusted local user and one loopback TCP session.
+It is an evidence aid, not a hostile-user security or non-repudiation product.

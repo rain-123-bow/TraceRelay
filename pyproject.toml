@@ -18,21 +18,12 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 
-[tool.setuptools]
-include-package-data = true
+[project.optional-dependencies]
+test = ["pytest==9.1.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-tracerelay = [
-  "_build_identity.json",
-  "assets/v1/*.json",
-  "assets/v1/*.md",
-  "assets/v1/schemas/*.json",
-]
-
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
-
