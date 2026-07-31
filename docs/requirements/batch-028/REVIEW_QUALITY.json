@@ -1,0 +1,101 @@
+{
+  "schema_version": "tracerelay.requirement_change_reviewer_quality.v1",
+  "reviewer_role": "REQUIREMENT_CHANGE_REVIEWER",
+  "canonical_task": "/root/tracerelay_requirement_change_reviewer_v2",
+  "batch_id": "batch-028",
+  "snapshot_id": "tracerelay-req-b028-cb300b09eae0",
+  "snapshot_manifest_sha256": "040d1e2ee6178393923011f996784242f0ed0f7c6f011f07c793cfe77890a219",
+  "verdict": "PASS",
+  "severity_counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "quality_checks": {
+    "global_quality_law_read_and_applied": true,
+    "snapshot_only_product_evidence": true,
+    "snapshot_manifest_identity_verified": true,
+    "all_declared_entry_hashes_verified": true,
+    "snapshot_path_containment_verified": true,
+    "all_normative_files_read_in_full": true,
+    "all_context_files_read_in_full": true,
+    "all_prior_reports_read_in_full": true,
+    "all_historical_findings_rechecked_against_current_normative_set": true,
+    "continued_after_candidate_counterexample_search": true,
+    "fresh_full_set_scan_completed": true,
+    "diff_only_review": false,
+    "incremental_single_finding_review": false,
+    "author_or_prior_pass_used_as_substitute_for_judgment": false,
+    "mutable_source_or_chat_used_as_product_evidence": false,
+    "snapshot_modified": false,
+    "subagent_created": false,
+    "implementation_runtime_or_hardware_verified": false,
+    "reasoning_ledger_project_consistency_claimed": false
+  },
+  "coverage": {
+    "manifest_declared_entries": 39,
+    "manifest_verified_entries": 39,
+    "snapshot_directory_files": 40,
+    "normative_files": 5,
+    "normative_files_read_in_full": 5,
+    "context_files": 34,
+    "context_files_read_in_full": 34,
+    "prior_reports": 28,
+    "prior_reports_read_in_full": 28,
+    "normative_lines": 15373,
+    "normative_bytes": 1088105,
+    "context_lines": 10564,
+    "context_bytes": 634676
+  },
+  "historical_regression": {
+    "report_local_findings_total": 113,
+    "closed": 113,
+    "partial": 0,
+    "reopened": 0,
+    "open": 0
+  },
+  "fresh_scan": {
+    "fresh_findings": 0,
+    "CPO_001_closed": true,
+    "requirement_alignment_issues": 0,
+    "unconfirmed_assumptions": 0,
+    "ambiguities": 0,
+    "unverifiable_items": 0,
+    "risk_gaps": 0
+  },
+  "independent_machine_checks": {
+    "requirements": 136,
+    "tests": 136,
+    "traceability_issues": 0,
+    "reason_ids": 115,
+    "selector_operations": 19,
+    "selector_rules": 138,
+    "positive_patterns": 30,
+    "expanded_positive_tuples": 58,
+    "selector_construction_issues": 0,
+    "offset_tables": 23,
+    "offset_rows": 456,
+    "offset_gaps": 0,
+    "offset_overlaps": 0,
+    "profile_resource_assertions": 54,
+    "profile_resource_assertions_passed": 54
+  },
+  "reasoning_ledger": {
+    "status": "UNAVAILABLE",
+    "external_ledger_used": false,
+    "project_level_consistency_claimed": false
+  },
+  "result": {
+    "path": "C:\\code\\recorder-artifacts\\tracerelay-requirement-design-v1\\reviews\\batch-028\\REVIEW_RESULT.md",
+    "standalone_markdown": true
+  },
+  "output_contract": {
+    "utf8_without_bom_required": true,
+    "lf_only_required": true,
+    "json_parse_required": true,
+    "utf8_without_bom_validated": true,
+    "lf_only_validated": true,
+    "json_parse_validated": true
+  },
+  "pass_condition": "P0=0 && P1=0 && P2=0"
+}
