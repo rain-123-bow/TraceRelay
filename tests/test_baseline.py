@@ -39,6 +39,7 @@ def test_minimal_package_configuration() -> None:
     assert pyproject["project"]["optional-dependencies"] == {
         "test": ["pytest==9.1.1"]
     }
+    assert pyproject["project"]["scripts"] == {"tracerelay": "tracerelay.cli:main"}
     assert "package-data" not in pyproject["tool"]["setuptools"]
 
 

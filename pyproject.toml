@@ -18,6 +18,9 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 
+[project.scripts]
+tracerelay = "tracerelay.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest==9.1.1"]
 

@@ -6,8 +6,32 @@ later independent verification.
 
 ## Current implementation status
 
-The runtime is not implemented yet. The former full-assurance design has been
-retired because it exceeded the needs of the first usable version.
+Milestone M1 is implemented. It provides the smallest foreground runtime:
+
+- one loopback TCP session at a time;
+- durable, hash-chained traffic evidence written before forwarding;
+- independent read-only session verification;
+- `status`, `register`, `close`, and `verify` commands.
+
+Run the foreground Service in one PowerShell terminal:
+
+```powershell
+python -m tracerelay.service
+```
+
+Use the CLI from another terminal:
+
+```powershell
+tracerelay status
+tracerelay register --upstream-port 9000
+tracerelay close
+tracerelay verify <session-directory>
+```
+
+Press `Ctrl+C` in the Service terminal to stop it. Detached process management,
+`start` / `stop`, heartbeat monitoring, alarms, quotas, and delivery hardening
+belong to later milestones and are not implemented. If the M1 foreground
+Service enters `FAULT`, stop it with `Ctrl+C` and start a fresh process.
 
 Current design:
 
@@ -15,9 +39,8 @@ Current design:
 - `docs/v1/IMPLEMENTATION_PLAN.md`
 - `docs/v1/DESIGN_REVIEW.md`
 
-The repository baseline has been reset to the minimal v1 design. Runtime
-implementation starts at milestone M1; no service, proxy, recorder, or CLI is
-available yet.
+The implementation intentionally stops at the M1 boundary described in the
+plan.
 
 ## Supported target
 
