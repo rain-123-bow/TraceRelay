@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import select
+import shutil
 import socket
 import threading
 from dataclasses import dataclass
@@ -16,7 +17,9 @@ from .config import (
     CONTROL_HOST,
     CONTROL_MESSAGE_LIMIT,
     FORMAT_VERSION,
+    JOURNAL_LIMIT_BYTES,
     READ_CHUNK_SIZE,
+    SESSION_ADMISSION_RESERVE_BYTES,
     UPSTREAM_CONNECT_TIMEOUT_SECONDS,
     RuntimePaths,
     atomic_write_json,
@@ -39,6 +42,10 @@ class SessionError(RuntimeError):
 
 
 class SessionBusyError(SessionError):
+    pass
+
+
+class SessionAdmissionError(SessionError):
     pass
 
 
@@ -74,10 +81,32 @@ class SessionManager:
         paths: RuntimePaths,
         *,
         on_fault: Callable[[SessionRegistration, BaseException], None] | None = None,
+        journal_limit_bytes: int = JOURNAL_LIMIT_BYTES,
+        admission_reserve_bytes: int = SESSION_ADMISSION_RESERVE_BYTES,
     ) -> None:
+        if (
+            type(journal_limit_bytes) is not int
+            or not 1 <= journal_limit_bytes <= JOURNAL_LIMIT_BYTES
+        ):
+            raise ValueError(
+                "journal_limit_bytes must be an integer between 1 and "
+                f"{JOURNAL_LIMIT_BYTES}"
+            )
+        if (
+            type(admission_reserve_bytes) is not int
+            or not 0 <= admission_reserve_bytes <= SESSION_ADMISSION_RESERVE_BYTES
+        ):
+            raise ValueError(
+                "admission_reserve_bytes must be an integer between 0 and "
+                f"{SESSION_ADMISSION_RESERVE_BYTES}"
+            )
         self.paths = paths
         self.paths.ensure()
         self._fault_callback = on_fault
+        self._journal_limit_bytes = journal_limit_bytes
+        self._admission_required_bytes = (
+            journal_limit_bytes + admission_reserve_bytes
+        )
         self._lock = threading.Lock()
         self._state = SessionState.IDLE
         self._active: _RelaySession | None = None
@@ -91,6 +120,19 @@ class SessionManager:
         with self._lock:
             if self._state is not SessionState.IDLE or self._active is not None:
                 raise SessionBusyError(f"cannot register while state is {self._state}")
+
+            try:
+                free_bytes = shutil.disk_usage(self.paths.sessions).free
+            except OSError as error:
+                raise SessionAdmissionError(
+                    f"cannot determine available session storage: {error}"
+                ) from error
+            if free_bytes < self._admission_required_bytes:
+                raise SessionAdmissionError(
+                    "insufficient free space for a new session: "
+                    f"{free_bytes} bytes available, "
+                    f"{self._admission_required_bytes} bytes required"
+                )
 
             session_id = new_session_id()
             session_path = self.paths.sessions / session_id
@@ -114,12 +156,17 @@ class SessionManager:
                     "limits": {
                         "read_chunk_size": READ_CHUNK_SIZE,
                         "control_message_limit": CONTROL_MESSAGE_LIMIT,
+                        "journal_limit_bytes": self._journal_limit_bytes,
+                        "admission_required_free_bytes": self._admission_required_bytes,
                         "upstream_connect_timeout_seconds": UPSTREAM_CONNECT_TIMEOUT_SECONDS,
                         "single_client": True,
                     },
                 }
                 atomic_write_json(session_path / "session.json", metadata)
-                journal = JournalWriter(session_path / "journal.trr")
+                journal = JournalWriter(
+                    session_path / "journal.trr",
+                    max_bytes=self._journal_limit_bytes,
+                )
                 listener.listen(1)
                 registration = SessionRegistration(
                     session_id=session_id,

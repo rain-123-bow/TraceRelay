@@ -2,15 +2,71 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
+import socket
 import struct
+import threading
+import time
 from pathlib import Path
 
+from tracerelay.config import RuntimePaths
+from tracerelay.session import SessionManager, SessionState
 from tracerelay.verify import INVALID, VALID_COMPLETE, VALID_INCOMPLETE, verify_session
 
 
 HEADER = struct.Struct("<4sHBBQQQQQIi32s")
 ZERO_HASH = bytes(32)
 SESSION_ID = "20260801T000000.000000Z_12345678123446789abcdef012345678"
+
+
+def test_independent_parser_rebuilds_real_relay_bytes_by_direction(
+    tmp_path: Path,
+) -> None:
+    generator = random.Random(20260802)
+    request = generator.randbytes(81_337)
+    response = generator.randbytes(73_119)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    upstream_port = int(listener.getsockname()[1])
+    received: list[bytes] = []
+    errors: list[BaseException] = []
+
+    def run_upstream() -> None:
+        try:
+            with listener:
+                connection, _address = listener.accept()
+                with connection:
+                    connection.settimeout(5.0)
+                    received.append(_receive_all(connection))
+                    connection.sendall(response)
+                    connection.shutdown(socket.SHUT_WR)
+        except BaseException as error:
+            errors.append(error)
+
+    upstream_thread = threading.Thread(target=run_upstream, daemon=True)
+    upstream_thread.start()
+    manager = SessionManager(RuntimePaths.from_root(tmp_path / "runtime"))
+    registration = manager.register(upstream_port)
+    with socket.create_connection(
+        (registration.proxy_host, registration.proxy_port), timeout=5.0
+    ) as client:
+        client.settimeout(5.0)
+        client.sendall(request)
+        client.shutdown(socket.SHUT_WR)
+        reply = _receive_all(client)
+
+    upstream_thread.join(timeout=5.0)
+    assert not upstream_thread.is_alive()
+    assert errors == []
+    assert received == [request]
+    assert reply == response
+    _wait_for_state(manager, SessionState.IDLE)
+
+    rebuilt = _independently_rebuild_streams(
+        registration.session_path / "journal.trr"
+    )
+    assert rebuilt == {1: request, 2: response}
 
 
 def test_independent_known_bytes_verify_as_complete(tmp_path: Path) -> None:
@@ -360,6 +416,8 @@ def _write_session_metadata(tmp_path: Path) -> Path:
             "limits": {
                 "read_chunk_size": 65_536,
                 "control_message_limit": 65_536,
+                "journal_limit_bytes": 2_147_483_648,
+                "admission_required_free_bytes": 2_164_260_864,
                 "upstream_connect_timeout_seconds": 10.0,
                 "single_client": True,
             },
@@ -374,3 +432,77 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
         encoding="utf-8",
         newline="\n",
     )
+
+
+def _independently_rebuild_streams(path: Path) -> dict[int, bytes]:
+    data = path.read_bytes()
+    offset = 0
+    expected_sequence = 1
+    previous_hash = bytes(32)
+    streams = {1: bytearray(), 2: bytearray()}
+    while offset < len(data):
+        record_offset = offset
+        header = data[offset : offset + HEADER.size]
+        assert len(header) == HEADER.size
+        offset += HEADER.size
+        (
+            magic,
+            version,
+            record_type,
+            direction,
+            sequence,
+            _utc_ns,
+            _monotonic_ns,
+            related_sequence,
+            stream_offset,
+            payload_length,
+            result_code,
+            recorded_previous_hash,
+        ) = HEADER.unpack(header)
+        payload = data[offset : offset + payload_length]
+        offset += payload_length
+        current_hash = data[offset : offset + 32]
+        offset += 32
+
+        assert magic == b"TRR1"
+        assert version == 1
+        assert direction in streams
+        assert sequence == expected_sequence
+        assert recorded_previous_hash == previous_hash
+        assert len(payload) == payload_length
+        assert len(current_hash) == 32
+        assert current_hash == hashlib.sha256(header + payload).digest()
+        if record_type == 1:
+            assert related_sequence == 0
+            assert result_code == 0
+            assert stream_offset == len(streams[direction])
+            streams[direction].extend(payload)
+        else:
+            assert record_type in {2, 3}
+            assert payload == b""
+            assert related_sequence < sequence
+        previous_hash = current_hash
+        expected_sequence += 1
+        assert offset > record_offset
+    assert offset == len(data)
+    return {direction: bytes(payload) for direction, payload in streams.items()}
+
+
+def _receive_all(connection: socket.socket) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = connection.recv(32 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _wait_for_state(
+    manager: SessionManager, expected: SessionState, timeout: float = 5.0
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if manager.status()["state"] == expected.value:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"session did not reach {expected.value}: {manager.status()}")

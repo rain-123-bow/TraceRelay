@@ -1,4 +1,4 @@
-"""Command-line client for the TraceRelay M2 runtime."""
+"""Command-line client for the TraceRelay v1 runtime."""
 
 from __future__ import annotations
 

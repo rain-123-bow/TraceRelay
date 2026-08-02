@@ -1,4 +1,4 @@
-"""Relay Service control endpoint and managed M2 process runtime."""
+"""Relay Service control endpoint and managed v1 process runtime."""
 
 from __future__ import annotations
 
@@ -17,14 +17,17 @@ from .config import (
     CONTROL_HOST,
     CONTROL_PORT,
     HEARTBEAT_TIMEOUT_SECONDS,
+    JOURNAL_LIMIT_BYTES,
     PROCESS_POLL_INTERVAL_SECONDS,
     PRODUCT_NAME,
+    SESSION_ADMISSION_RESERVE_BYTES,
     RuntimePaths,
     latest_alarm_summary,
     write_alarm,
 )
 from .control import ControlServer
 from .session import (
+    SessionAdmissionError,
     SessionError,
     SessionManager,
     SessionRegistration,
@@ -43,6 +46,8 @@ class TraceRelayService:
         control_port: int = CONTROL_PORT,
         supervisor_pid: int | None = None,
         managed: bool = False,
+        journal_limit_bytes: int = JOURNAL_LIMIT_BYTES,
+        admission_reserve_bytes: int = SESSION_ADMISSION_RESERVE_BYTES,
     ) -> None:
         if supervisor_pid is not None and (
             isinstance(supervisor_pid, bool)
@@ -59,6 +64,8 @@ class TraceRelayService:
         self.manager = SessionManager(
             self.paths,
             on_fault=self._write_session_fault_alarm,
+            journal_limit_bytes=journal_limit_bytes,
+            admission_reserve_bytes=admission_reserve_bytes,
         )
         self.stop_requested = threading.Event()
         self._stop_error: str | None = None
@@ -121,7 +128,10 @@ class TraceRelayService:
                 return self._success(command, self.status_payload())
             if command == "register":
                 _require_fields(request, {"command", "upstream_port"})
-                registration = self.manager.register(request.get("upstream_port"))
+                try:
+                    registration = self.manager.register(request.get("upstream_port"))
+                except SessionAdmissionError as error:
+                    return self._admission_error(command, error)
                 payload = registration.as_dict()
                 payload["state"] = self.manager.status()["state"]
                 return self._success(command, payload)
@@ -186,6 +196,30 @@ class TraceRelayService:
                 )
             except BaseException as alarm_error:
                 _write_stderr_error("alarm_write_failed", alarm_error)
+
+    def _admission_error(
+        self, command: str, error: SessionAdmissionError
+    ) -> dict[str, Any]:
+        public_alarm: dict[str, object] | None = None
+        try:
+            alarm = write_alarm(
+                self.paths,
+                source="service",
+                reason="session_admission_failed",
+                service_pid=self.service_pid,
+                supervisor_pid=self.supervisor_pid,
+                session_id=None,
+                error=error,
+            )
+        except BaseException as alarm_error:
+            _write_stderr_error("alarm_write_failed", alarm_error)
+            self.manager.abort("alarm_write_failed")
+        else:
+            public_alarm = alarm.public_summary()
+        response = self._error(command, str(error))
+        if public_alarm is not None:
+            response["last_alarm"] = public_alarm
+        return response
 
     def _success(self, command: str, payload: dict[str, object]) -> dict[str, Any]:
         response: dict[str, Any] = {

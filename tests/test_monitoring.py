@@ -13,6 +13,7 @@ from typing import Any, Callable
 import pytest
 
 from tracerelay import service as service_module
+from tracerelay import session as session_module
 from tracerelay import supervisor as supervisor_module
 from tracerelay.config import (
     CONTROL_HOST,
@@ -374,6 +375,111 @@ def test_managed_service_journal_fault_never_forwards_payload(
     assert not (registration.session_path / "complete.json").exists()
 
 
+def test_managed_service_quota_fault_alarms_exits_and_never_forwards_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tracerelay.journal import JOURNAL_RECORD_OVERHEAD, JournalLimitExceeded
+
+    paths = RuntimePaths.from_root(tmp_path / "runtime")
+    supervisor_pid = 71_006
+    payload = b"over-the-reduced-test-limit"
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind((CONTROL_HOST, 0))
+    listener.listen(1)
+    listener.settimeout(3.0)
+    upstream_port = int(listener.getsockname()[1])
+    upstream_received: list[bytes] = []
+    upstream_errors: list[BaseException] = []
+
+    def run_upstream() -> None:
+        try:
+            with listener:
+                connection, _address = listener.accept()
+                with connection:
+                    connection.settimeout(3.0)
+                    upstream_received.append(_receive_all(connection))
+        except BaseException as error:
+            upstream_errors.append(error)
+
+    upstream_thread = threading.Thread(target=run_upstream, daemon=True)
+    upstream_thread.start()
+    run = _start_service_runtime(
+        paths,
+        supervisor_pid,
+        monkeypatch,
+        journal_limit_bytes=2 * JOURNAL_RECORD_OVERHEAD,
+        admission_reserve_bytes=0,
+    )
+    registration = run.instance.manager.register(upstream_port)
+    client = socket.create_connection(
+        (registration.proxy_host, registration.proxy_port), timeout=3.0
+    )
+    try:
+        _wait_for_service_state(run.instance, SessionState.RELAYING)
+        client.sendall(payload)
+        client.settimeout(3.0)
+        assert client.recv(1) == b""
+        _join_thread(run.thread, timeout=3.0)
+    finally:
+        client.close()
+        run.connection.close()
+        run.thread.join(timeout=2.0)
+        upstream_thread.join(timeout=3.0)
+
+    assert run.result == [1]
+    assert not upstream_thread.is_alive()
+    assert upstream_errors == []
+    assert upstream_received == [b""]
+    assert run.instance.manager.status()["state"] == SessionState.FAULT.value
+    alarm = _only_alarm(paths)
+    assert alarm["source"] == "service"
+    assert alarm["reason"] == "session_fault"
+    assert alarm["session_id"] == registration.session_id
+    assert alarm["exception_type"] == JournalLimitExceeded.__name__
+    assert "journal limit" in alarm["message"]
+    verification = verify_session(registration.session_path)
+    assert verification.status == VALID_INCOMPLETE
+    assert verification.record_count == 0
+    assert not (registration.session_path / "complete.json").exists()
+
+
+def test_admission_alarm_write_failure_faults_service_and_returns_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = RuntimePaths.from_root(tmp_path / "runtime")
+    supervisor_pid = 71_007
+    run = _start_service_runtime(paths, supervisor_pid, monkeypatch)
+    monkeypatch.setattr(
+        session_module.shutil,
+        "disk_usage",
+        lambda _path: type("Usage", (), {"free": 0})(),
+    )
+
+    def fail_alarm(*_args: object, **_kwargs: object) -> object:
+        raise OSError("injected admission alarm failure")
+
+    monkeypatch.setattr(service_module, "write_alarm", fail_alarm)
+    try:
+        response = run.instance.handle_request(
+            {"command": "register", "upstream_port": 9}
+        )
+        _join_thread(run.thread, timeout=3.0)
+    finally:
+        run.connection.close()
+        run.thread.join(timeout=2.0)
+
+    assert response["ok"] is False
+    assert response["state"] == SessionState.FAULT.value
+    assert "last_alarm" not in response
+    assert run.result == [1]
+    assert list(paths.alarms.glob("*.json")) == []
+    stderr = capsys.readouterr().err
+    assert "alarm_write_failed" in stderr
+    assert "injected admission alarm failure" in stderr
+
+
 def test_supervisor_alarms_when_service_exits_abnormally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -535,6 +641,7 @@ def _start_service_runtime(
     paths: RuntimePaths,
     supervisor_pid: int,
     monkeypatch: pytest.MonkeyPatch,
+    **service_options: object,
 ) -> _ServiceRun:
     original_service = service_module.TraceRelayService
     ready = threading.Event()
@@ -542,7 +649,7 @@ def _start_service_runtime(
     result: list[int] = []
 
     def build_service(**kwargs: Any) -> service_module.TraceRelayService:
-        instance = original_service(control_port=0, **kwargs)
+        instance = original_service(control_port=0, **service_options, **kwargs)
         instances.append(instance)
         ready.set()
         return instance

@@ -5,13 +5,46 @@ import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from tracerelay import session as session_module
 from tracerelay.config import CONTROL_HOST, CONTROL_MESSAGE_LIMIT, RuntimePaths
 from tracerelay.control import ControlClient
 from tracerelay.service import TraceRelayService
 from tracerelay.verify import VALID_COMPLETE, verify_session
+
+
+def test_storage_admission_failure_writes_an_alarm_without_a_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = RuntimePaths.from_root(tmp_path / "runtime")
+    service = TraceRelayService(paths=paths, control_port=0)
+    monkeypatch.setattr(
+        session_module.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=0),
+    )
+    try:
+        response = service.handle_request({"command": "register", "upstream_port": 9})
+    finally:
+        service.shutdown(session_timeout=0.0)
+
+    assert response["ok"] is False
+    assert response["state"] == "IDLE"
+    assert "insufficient free space" in response["error"]
+    public_alarm = response["last_alarm"]
+    alarm_path = Path(public_alarm["alarm_path"])
+    alarm = json.loads(alarm_path.read_text(encoding="utf-8"))
+    assert public_alarm == {
+        "incident_id": alarm["incident_id"],
+        "reason": "session_admission_failed",
+        "alarm_path": str(alarm_path),
+    }
+    assert alarm["source"] == "service"
+    assert alarm["session_id"] is None
+    assert list(paths.sessions.iterdir()) == []
 
 
 def test_control_status_register_reject_second_and_close(tmp_path: Path) -> None:

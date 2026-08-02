@@ -6,13 +6,15 @@ later independent verification.
 
 ## Current implementation status
 
-Milestone M2 is implemented. It provides the fault-closed local runtime:
+Milestone M3 is implemented, completing the scoped TraceRelay v1 runtime:
 
 - one loopback TCP session at a time;
 - durable, hash-chained traffic evidence written before forwarding;
 - independent read-only session verification;
 - a detached Supervisor and managed Relay Service with bidirectional heartbeats;
 - persistent alarms for process, monitoring, upstream, and journal failures;
+- a 2 GiB journal limit with terminal-record reservation before forwarding;
+- session admission only when the journal limit plus 16 MiB is available;
 - `start`, `status`, `register`, `close`, `stop`, and `verify` commands.
 
 Start the detached runtime:
@@ -48,9 +50,10 @@ Current design:
 - `docs/v1/IMPLEMENTATION_PLAN.md`
 - `docs/v1/DESIGN_REVIEW.md`
 
-The implementation intentionally stops at the M2 boundary described in the
-plan. M3 quotas, free-space admission checks, wheel delivery, and cleanup are
-not implemented yet.
+The Windows wheel is built and installed in an isolated environment by the
+automated delivery test, which runs every CLI command from outside the source
+tree without network access. The implementation stops at the v1/M3 boundary:
+old evidence is never automatically deleted, rotated, repaired, or resumed.
 
 ## Supported target
 

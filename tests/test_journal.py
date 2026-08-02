@@ -4,8 +4,24 @@ import json
 import threading
 from pathlib import Path
 
-from tracerelay.config import FORMAT_VERSION, atomic_write_json, utc_now_text
-from tracerelay.journal import JOURNAL_HEADER, Direction, JournalSummary, JournalWriter
+import pytest
+
+from tracerelay.config import (
+    FORMAT_VERSION,
+    JOURNAL_LIMIT_BYTES,
+    SESSION_ADMISSION_RESERVE_BYTES,
+    atomic_write_json,
+    utc_now_text,
+)
+from tracerelay.journal import (
+    JOURNAL_HEADER,
+    JOURNAL_RECORD_OVERHEAD,
+    DataReference,
+    Direction,
+    JournalLimitExceeded,
+    JournalSummary,
+    JournalWriter,
+)
 from tracerelay.verify import (
     INVALID,
     VALID_COMPLETE,
@@ -54,6 +70,85 @@ def test_missing_send_result_is_valid_incomplete(tmp_path: Path) -> None:
     assert result.record_count == 1
     assert "unknown" in (result.problem or "")
     assert result.unknown_bytes["client_to_upstream"] == len(b"written-before-send")
+
+
+def test_journal_limit_reserves_the_terminal_record_before_accepting_data(
+    tmp_path: Path,
+) -> None:
+    payload = b"at-the-boundary"
+    exact_limit = (2 * JOURNAL_RECORD_OVERHEAD) + len(payload)
+    journal_path = tmp_path / "journal.trr"
+    journal = JournalWriter(journal_path, max_bytes=exact_limit)
+
+    reference = journal.append_data(Direction.CLIENT_TO_UPSTREAM, payload)
+    size_after_data = journal_path.stat().st_size
+    with pytest.raises(JournalLimitExceeded, match="journal limit"):
+        journal.append_data(Direction.UPSTREAM_TO_CLIENT, b"x")
+
+    assert journal_path.stat().st_size == size_after_data
+    journal.append_send_ok(reference)
+    journal.close()
+    assert journal_path.stat().st_size == exact_limit
+
+
+def test_data_one_byte_over_limit_is_rejected_without_writing_a_partial_record(
+    tmp_path: Path,
+) -> None:
+    payload = b"x"
+    required = (2 * JOURNAL_RECORD_OVERHEAD) + len(payload)
+    journal = JournalWriter(tmp_path / "journal.trr", max_bytes=required - 1)
+
+    with pytest.raises(JournalLimitExceeded, match="journal limit"):
+        journal.append_data(Direction.CLIENT_TO_UPSTREAM, payload)
+
+    assert journal.path.stat().st_size == 0
+    journal.close()
+
+
+def test_concurrent_data_writes_cannot_oversubscribe_result_reservations(
+    tmp_path: Path,
+) -> None:
+    payload = b"one-slot"
+    exact_limit = (2 * JOURNAL_RECORD_OVERHEAD) + len(payload)
+    journal = JournalWriter(tmp_path / "journal.trr", max_bytes=exact_limit)
+    barrier = threading.Barrier(3)
+    references: list[DataReference] = []
+    errors: list[BaseException] = []
+
+    def append(direction: Direction) -> None:
+        barrier.wait()
+        try:
+            references.append(journal.append_data(direction, payload))
+        except BaseException as error:
+            errors.append(error)
+
+    workers = [
+        threading.Thread(target=append, args=(direction,), daemon=True)
+        for direction in Direction
+    ]
+    for worker in workers:
+        worker.start()
+    barrier.wait()
+    for worker in workers:
+        worker.join(timeout=2.0)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert len(references) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], JournalLimitExceeded)
+    journal.append_send_ok(references[0])
+    journal.close()
+    assert journal.path.stat().st_size == exact_limit
+
+
+@pytest.mark.parametrize(
+    "invalid_limit", [True, 0, -1, 1.0, JOURNAL_LIMIT_BYTES + 1]
+)
+def test_journal_limit_requires_a_positive_integer(
+    tmp_path: Path, invalid_limit: object
+) -> None:
+    with pytest.raises(ValueError, match="max_bytes"):
+        JournalWriter(tmp_path / f"{invalid_limit!s}.trr", max_bytes=invalid_limit)  # type: ignore[arg-type]
 
 
 def test_truncated_tail_preserves_valid_prefix(tmp_path: Path) -> None:
@@ -160,6 +255,47 @@ def test_session_metadata_requires_utc_uuid_and_effective_limits(tmp_path: Path)
     assert "UTC timestamp and UUID" in (result.problem or "")
 
 
+def test_verifier_rejects_a_journal_larger_than_its_declared_limit(
+    tmp_path: Path,
+) -> None:
+    session_dir = _new_session(tmp_path)
+    journal = JournalWriter(session_dir / "journal.trr")
+    reference = journal.append_data(Direction.CLIENT_TO_UPSTREAM, b"payload")
+    journal.append_send_ok(reference)
+    journal.close()
+    session_path = session_dir / "session.json"
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    session["limits"]["journal_limit_bytes"] = 1
+    session["limits"]["admission_required_free_bytes"] = 1
+    atomic_write_json(session_path, session)
+
+    result = verify_session(session_dir)
+
+    assert result.status == INVALID
+    assert result.problem_path == "journal.trr"
+    assert "exceeds session limit" in (result.problem or "")
+
+
+def test_verifier_rejects_admission_threshold_above_the_session_limit_reserve(
+    tmp_path: Path,
+) -> None:
+    session_dir = _new_session(tmp_path)
+    session_path = session_dir / "session.json"
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    session["limits"]["journal_limit_bytes"] = 1_024
+    session["limits"]["admission_required_free_bytes"] = (
+        1_024 + SESSION_ADMISSION_RESERVE_BYTES + 1
+    )
+    atomic_write_json(session_path, session)
+    (session_dir / "journal.trr").write_bytes(b"")
+
+    result = verify_session(session_dir)
+
+    assert result.status == INVALID
+    assert result.problem_path == "session.json"
+    assert "admission_required_free_bytes" in (result.problem or "")
+
+
 def test_concurrent_directions_keep_global_sequence_and_direction_offsets(
     tmp_path: Path,
 ) -> None:
@@ -226,6 +362,10 @@ def _new_session(tmp_path: Path) -> Path:
             "limits": {
                 "read_chunk_size": 65_536,
                 "control_message_limit": 65_536,
+                "journal_limit_bytes": JOURNAL_LIMIT_BYTES,
+                "admission_required_free_bytes": (
+                    JOURNAL_LIMIT_BYTES + SESSION_ADMISSION_RESERVE_BYTES
+                ),
                 "upstream_connect_timeout_seconds": 10.0,
                 "single_client": True,
             },

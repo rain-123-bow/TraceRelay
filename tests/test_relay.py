@@ -6,12 +6,30 @@ import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from tracerelay.config import CONTROL_HOST, RuntimePaths
-from tracerelay.journal import DataReference, Direction, JournalWriter
-from tracerelay.session import SessionBusyError, SessionManager, SessionState
+from tracerelay import session as session_module
+from tracerelay.config import (
+    CONTROL_HOST,
+    JOURNAL_LIMIT_BYTES,
+    SESSION_ADMISSION_RESERVE_BYTES,
+    RuntimePaths,
+)
+from tracerelay.journal import (
+    JOURNAL_RECORD_OVERHEAD,
+    DataReference,
+    Direction,
+    JournalLimitExceeded,
+    JournalWriter,
+)
+from tracerelay.session import (
+    SessionAdmissionError,
+    SessionBusyError,
+    SessionManager,
+    SessionState,
+)
 from tracerelay.verify import VALID_COMPLETE, VALID_INCOMPLETE, verify_session
 
 
@@ -67,6 +85,157 @@ def test_waiting_session_rejects_second_registration_and_closes_cleanly(
     verification = verify_session(registration.session_path)
     assert verification.status == VALID_COMPLETE
     assert verification.record_count == 0
+
+
+def test_storage_admission_happens_before_a_session_directory_is_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal_limit = 1_024
+    reserve = 16
+    required = journal_limit + reserve
+    free_bytes = required - 1
+    monkeypatch.setattr(
+        session_module.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=free_bytes),
+    )
+    paths = RuntimePaths.from_root(tmp_path / "runtime")
+    manager = SessionManager(
+        paths,
+        journal_limit_bytes=journal_limit,
+        admission_reserve_bytes=reserve,
+    )
+
+    with pytest.raises(SessionAdmissionError, match="insufficient free space"):
+        manager.register(9)
+
+    assert manager.status() == {"state": SessionState.IDLE.value}
+    assert list(paths.sessions.iterdir()) == []
+
+    free_bytes = required
+    registration = manager.register(9)
+    metadata = json.loads(
+        (registration.session_path / "session.json").read_text(encoding="utf-8")
+    )
+    assert metadata["limits"]["journal_limit_bytes"] == journal_limit
+    assert metadata["limits"]["admission_required_free_bytes"] == required
+    manager.close(timeout=2.0)
+    assert verify_session(registration.session_path).status == VALID_COMPLETE
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"journal_limit_bytes": JOURNAL_LIMIT_BYTES + 1}, "journal_limit_bytes"),
+        (
+            {"admission_reserve_bytes": SESSION_ADMISSION_RESERVE_BYTES + 1},
+            "admission_reserve_bytes",
+        ),
+    ],
+)
+def test_session_manager_rejects_limits_outside_the_v1_boundary(
+    tmp_path: Path, options: dict[str, int], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SessionManager(RuntimePaths.from_root(tmp_path / message), **options)
+
+
+def test_over_limit_data_is_not_forwarded_and_session_remains_incomplete(
+    tmp_path: Path,
+) -> None:
+    payload = b"must-not-cross-the-quota-boundary"
+    upstream_port, received, upstream_errors, upstream_thread = _start_upstream(b"")
+    faults: list[BaseException] = []
+    manager = SessionManager(
+        RuntimePaths.from_root(tmp_path / "runtime"),
+        on_fault=lambda _registration, error: faults.append(error),
+        journal_limit_bytes=2 * JOURNAL_RECORD_OVERHEAD,
+        admission_reserve_bytes=0,
+    )
+    registration = manager.register(upstream_port)
+
+    with socket.create_connection(
+        (registration.proxy_host, registration.proxy_port), timeout=5.0
+    ) as client:
+        client.settimeout(5.0)
+        client.sendall(payload)
+        assert client.recv(1) == b""
+
+    _wait_for_state(manager, SessionState.FAULT)
+    upstream_thread.join(timeout=5.0)
+    assert not upstream_thread.is_alive()
+    assert upstream_errors == []
+    assert received == [b""]
+    assert len(faults) == 1
+    assert isinstance(faults[0], JournalLimitExceeded)
+    assert (registration.session_path / "journal.trr").stat().st_size == 0
+    verification = verify_session(registration.session_path)
+    assert verification.status == VALID_INCOMPLETE
+    assert verification.record_count == 0
+    assert not (registration.session_path / "complete.json").exists()
+
+
+def test_second_client_and_same_session_reconnect_are_rejected(
+    tmp_path: Path,
+) -> None:
+    payload = b"first-client-only"
+    upstream_port, received, upstream_errors, upstream_thread = _start_upstream(b"")
+    manager = SessionManager(RuntimePaths.from_root(tmp_path / "runtime"))
+    registration = manager.register(upstream_port)
+    endpoint = (registration.proxy_host, registration.proxy_port)
+    first = socket.create_connection(endpoint, timeout=5.0)
+    first.settimeout(5.0)
+    try:
+        _wait_for_state(manager, SessionState.RELAYING)
+        with pytest.raises(SessionBusyError):
+            manager.register(upstream_port)
+        with pytest.raises(OSError):
+            socket.create_connection(endpoint, timeout=1.0)
+        assert [path.name for path in manager.paths.sessions.iterdir()] == [
+            registration.session_id
+        ]
+        first.sendall(payload)
+        first.shutdown(socket.SHUT_WR)
+        assert _receive_all(first) == b""
+    finally:
+        first.close()
+
+    _wait_for_state(manager, SessionState.IDLE)
+    with pytest.raises(OSError):
+        socket.create_connection(endpoint, timeout=1.0)
+    upstream_thread.join(timeout=5.0)
+    assert not upstream_thread.is_alive()
+    assert upstream_errors == []
+    assert received == [payload]
+    assert verify_session(registration.session_path).status == VALID_COMPLETE
+
+
+def test_restart_preserves_incomplete_evidence_and_uses_a_new_session(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths.from_root(tmp_path / "runtime")
+    first_manager = SessionManager(paths)
+    first = first_manager.register(9)
+    first_manager.abort("simulated process restart")
+    first_snapshot = {
+        path.name: path.read_bytes()
+        for path in first.session_path.iterdir()
+        if path.is_file()
+    }
+
+    second_manager = SessionManager(paths)
+    second = second_manager.register(10)
+    second_manager.close(timeout=2.0)
+
+    assert first.session_id != second.session_id
+    assert first_snapshot == {
+        path.name: path.read_bytes()
+        for path in first.session_path.iterdir()
+        if path.is_file()
+    }
+    assert "complete.json" not in first_snapshot
+    assert verify_session(first.session_path).status == VALID_INCOMPLETE
+    assert verify_session(second.session_path).status == VALID_COMPLETE
 
 
 def test_reverse_half_close_keeps_the_other_direction_relaying(

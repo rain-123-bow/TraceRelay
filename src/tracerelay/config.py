@@ -18,6 +18,8 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = 43_190
 CONTROL_MESSAGE_LIMIT = 64 * 1024
 READ_CHUNK_SIZE = 64 * 1024
+JOURNAL_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+SESSION_ADMISSION_RESERVE_BYTES = 16 * 1024 * 1024
 UPSTREAM_CONNECT_TIMEOUT_SECONDS = 10.0
 CLOSE_TIMEOUT_SECONDS = 10.0
 HEARTBEAT_INTERVAL_SECONDS = 1.0
@@ -62,7 +64,6 @@ class AlarmRecord:
     """The durable identity and public summary of one runtime alarm."""
 
     incident_id: str
-    source: str
     reason: str
     path: Path
 
@@ -147,7 +148,7 @@ def write_alarm(
             "message": detail,
         },
     )
-    return AlarmRecord(incident_id, source, reason, alarm_path)
+    return AlarmRecord(incident_id, reason, alarm_path)
 
 
 def latest_alarm_summary(paths: RuntimePaths) -> dict[str, object] | None:

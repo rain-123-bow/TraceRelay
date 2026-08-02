@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from tracerelay.config import RuntimePaths, atomic_write_json, new_session_id
+from tracerelay.config import (
+    JOURNAL_LIMIT_BYTES,
+    SESSION_ADMISSION_RESERVE_BYTES,
+    RuntimePaths,
+    atomic_write_json,
+    new_session_id,
+)
 
 
 def test_runtime_paths_and_atomic_json(tmp_path: Path) -> None:
@@ -33,6 +39,11 @@ def test_session_ids_include_utc_and_random_components() -> None:
     assert timestamp.endswith("Z")
     assert len(random_part) == 32
     int(random_part, 16)
+
+
+def test_v1_storage_limits_match_the_frozen_requirements() -> None:
+    assert JOURNAL_LIMIT_BYTES == 2 * 1024 * 1024 * 1024
+    assert SESSION_ADMISSION_RESERVE_BYTES == 16 * 1024 * 1024
 
 
 def test_atomic_json_rejects_nonstandard_numbers_without_publishing(

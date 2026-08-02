@@ -14,7 +14,9 @@ from .config import (
     CONTROL_HOST,
     CONTROL_MESSAGE_LIMIT,
     FORMAT_VERSION,
+    JOURNAL_LIMIT_BYTES,
     READ_CHUNK_SIZE,
+    SESSION_ADMISSION_RESERVE_BYTES,
     UPSTREAM_CONNECT_TIMEOUT_SECONDS,
 )
 from .journal import (
@@ -98,8 +100,14 @@ def verify_session(session_directory: Path) -> VerificationResult:
 
     journal_path = session_dir / "journal.trr"
     try:
+        journal_size = journal_path.stat().st_size
+        journal_limit = session["limits"]["journal_limit_bytes"]
+        if journal_size > journal_limit:
+            raise ValueError(
+                f"journal size {journal_size} exceeds session limit {journal_limit}"
+            )
         stream = journal_path.open("rb")
-    except OSError as error:
+    except (OSError, ValueError) as error:
         return VerificationResult(
             INVALID,
             0,
@@ -108,7 +116,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
             empty_hash,
             sent_error_bytes={direction.label: 0 for direction in Direction},
             unknown_bytes={direction.label: 0 for direction in Direction},
-            problem=f"cannot open journal.trr: {error}",
+            problem=f"invalid journal.trr: {error}",
             problem_path="journal.trr",
         )
 
@@ -406,6 +414,22 @@ def _validate_session_metadata(session: dict[str, Any]) -> None:
         or limits["control_message_limit"] != CONTROL_MESSAGE_LIMIT
     ):
         raise ValueError("limits.control_message_limit is invalid")
+    journal_limit = limits.get("journal_limit_bytes")
+    if (
+        type(journal_limit) is not int
+        or not 1 <= journal_limit <= JOURNAL_LIMIT_BYTES
+    ):
+        raise ValueError("limits.journal_limit_bytes is invalid")
+    admission_required = limits.get("admission_required_free_bytes")
+    if (
+        type(admission_required) is not int
+        or not (
+            journal_limit
+            <= admission_required
+            <= journal_limit + SESSION_ADMISSION_RESERVE_BYTES
+        )
+    ):
+        raise ValueError("limits.admission_required_free_bytes is invalid")
     upstream_timeout = limits.get("upstream_connect_timeout_seconds")
     if (
         isinstance(upstream_timeout, bool)

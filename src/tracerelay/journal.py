@@ -12,7 +12,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import BinaryIO
 
-from .config import FORMAT_VERSION, READ_CHUNK_SIZE
+from .config import FORMAT_VERSION, JOURNAL_LIMIT_BYTES, READ_CHUNK_SIZE
 
 
 JOURNAL_MAGIC = b"TRR1"
@@ -22,6 +22,12 @@ ZERO_HASH = bytes(HASH_SIZE)
 # magic, version, type, direction, sequence, UTC ns, monotonic ns,
 # related DATA sequence, direction offset, payload length, result code, prev hash
 JOURNAL_HEADER = struct.Struct("<4sHBBQQQQQIi32s")
+JOURNAL_RECORD_OVERHEAD = JOURNAL_HEADER.size + HASH_SIZE
+SEND_RESULT_RECORD_SIZE = JOURNAL_RECORD_OVERHEAD
+
+
+class JournalLimitExceeded(RuntimeError):
+    """Raised before a DATA record would exceed the session journal limit."""
 
 
 class RecordType(IntEnum):
@@ -61,8 +67,16 @@ class JournalSummary:
 class JournalWriter:
     """Serialize and durably flush every evidence record before returning."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, max_bytes: int = JOURNAL_LIMIT_BYTES) -> None:
+        if (
+            type(max_bytes) is not int
+            or not 1 <= max_bytes <= JOURNAL_LIMIT_BYTES
+        ):
+            raise ValueError(
+                f"max_bytes must be an integer between 1 and {JOURNAL_LIMIT_BYTES}"
+            )
         self.path = Path(path)
+        self.max_bytes = max_bytes
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._stream: BinaryIO = self.path.open("xb")
         self._lock = threading.Lock()
@@ -72,6 +86,8 @@ class JournalWriter:
         self._observed = {direction: 0 for direction in Direction}
         self._sent_success = {direction: 0 for direction in Direction}
         self._pending: dict[int, DataReference] = {}
+        self._bytes_written = 0
+        self._reserved_result_bytes = 0
         self._closed = False
 
     def append_data(self, direction: Direction, payload: bytes) -> DataReference:
@@ -83,6 +99,18 @@ class JournalWriter:
             raise ValueError("payload length must be between 1 and READ_CHUNK_SIZE")
 
         with self._lock:
+            required_bytes = (
+                JOURNAL_RECORD_OVERHEAD + len(payload) + SEND_RESULT_RECORD_SIZE
+            )
+            projected_bytes = (
+                self._bytes_written
+                + self._reserved_result_bytes
+                + required_bytes
+            )
+            if projected_bytes > self.max_bytes:
+                raise JournalLimitExceeded(
+                    f"journal limit of {self.max_bytes} bytes would be exceeded"
+                )
             stream_offset = self._offsets[direction]
             sequence = self._write_record_locked(
                 record_type=RecordType.DATA,
@@ -96,6 +124,7 @@ class JournalWriter:
             self._offsets[direction] += len(payload)
             self._observed[direction] += len(payload)
             self._pending[sequence] = reference
+            self._reserved_result_bytes += SEND_RESULT_RECORD_SIZE
             return reference
 
     def append_send_ok(self, reference: DataReference) -> None:
@@ -110,6 +139,7 @@ class JournalWriter:
                 result_code=0,
             )
             self._sent_success[pending.direction] += pending.length
+            self._reserved_result_bytes -= SEND_RESULT_RECORD_SIZE
             del self._pending[pending.sequence]
 
     def append_send_error(self, reference: DataReference, error_code: int) -> None:
@@ -128,6 +158,7 @@ class JournalWriter:
                 payload=b"",
                 result_code=error_code,
             )
+            self._reserved_result_bytes -= SEND_RESULT_RECORD_SIZE
             del self._pending[pending.sequence]
 
     def summary(self) -> JournalSummary:
@@ -196,6 +227,7 @@ class JournalWriter:
         self._stream.write(current_hash)
         self._stream.flush()
         os.fsync(self._stream.fileno())
+        self._bytes_written += len(header) + len(payload) + len(current_hash)
         self._sequence = sequence
         self._previous_hash = current_hash
         return sequence
