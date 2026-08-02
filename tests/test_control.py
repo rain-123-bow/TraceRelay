@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -206,3 +207,36 @@ def test_control_port_is_an_exclusive_single_instance_lock(tmp_path: Path) -> No
             )
     finally:
         first.shutdown()
+
+
+def test_only_a_valid_stop_response_triggers_runtime_shutdown(
+    tmp_path: Path,
+) -> None:
+    service = TraceRelayService(
+        paths=RuntimePaths.from_root(tmp_path / "runtime"),
+        control_port=0,
+    )
+    thread = threading.Thread(target=service.serve_forever, daemon=True)
+    thread.start()
+    client = ControlClient(CONTROL_HOST, service.control_port)
+
+    try:
+        rejected = client.request({"command": "stop", "unexpected": True})
+        status = client.request({"command": "status"})
+        assert rejected["ok"] is False
+        assert rejected.get("stopping") is None
+        assert service.stop_requested.is_set() is False
+        assert status["ok"] is True
+
+        accepted = client.request({"command": "stop"})
+        deadline = time.monotonic() + 2.0
+        while not service.stop_requested.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        service.shutdown()
+        thread.join(timeout=2.0)
+
+    assert accepted["ok"] is True
+    assert accepted["stopping"] is True
+    assert service.stop_requested.is_set() is True
+    assert not thread.is_alive()

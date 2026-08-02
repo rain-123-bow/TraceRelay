@@ -69,15 +69,22 @@ class SessionRegistration:
 class SessionManager:
     """Own the sole waiting or running session allowed by v1."""
 
-    def __init__(self, paths: RuntimePaths) -> None:
+    def __init__(
+        self,
+        paths: RuntimePaths,
+        *,
+        on_fault: Callable[[SessionRegistration, BaseException], None] | None = None,
+    ) -> None:
         self.paths = paths
         self.paths.ensure()
+        self._fault_callback = on_fault
         self._lock = threading.Lock()
         self._state = SessionState.IDLE
         self._active: _RelaySession | None = None
         self._last_session_id: str | None = None
         self._last_session_path: Path | None = None
         self._last_error: str | None = None
+        self.faulted = threading.Event()
 
     def register(self, upstream_port: int) -> SessionRegistration:
         _validate_port(upstream_port)
@@ -127,11 +134,13 @@ class SessionManager:
                     listener=listener,
                     journal=journal,
                     on_state=self._on_state,
+                    on_fault=self._on_fault,
                     on_finished=self._on_finished,
                 )
                 self._active = relay
                 self._state = SessionState.WAITING
                 self._last_error = None
+                self.faulted.clear()
                 relay.start()
                 return registration
             except BaseException:
@@ -173,19 +182,53 @@ class SessionManager:
         result["session_id"] = relay.registration.session_id
         return result
 
-    def shutdown(self) -> None:
+    def shutdown(self, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
         with self._lock:
             relay = self._active
         if relay is None:
             return
         relay.request_close()
-        if not relay.done.wait(CLOSE_TIMEOUT_SECONDS):
+        if not relay.done.wait(timeout):
             relay.force_abort()
+
+    def abort(self, reason: str, timeout: float = 2.0) -> None:
+        """Force the active session incomplete after a process-level fault."""
+
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("abort reason must be a non-empty string")
+        with self._lock:
+            relay = self._active
+            if relay is None:
+                self._state = SessionState.FAULT
+                self._last_error = reason
+                self.faulted.set()
+                return
+        relay.force_abort()
+        if not relay.done.wait(timeout):
+            with self._lock:
+                if self._active is relay:
+                    self._state = SessionState.FAULT
+                    self._last_error = reason
+                    self.faulted.set()
 
     def _on_state(self, relay: _RelaySession, state: SessionState) -> None:
         with self._lock:
             if self._active is relay:
                 self._state = state
+
+    def _on_fault(self, relay: _RelaySession, error: BaseException) -> None:
+        with self._lock:
+            if self._active is not relay:
+                return
+            self._state = SessionState.FAULT
+            self._last_error = str(error)
+        try:
+            if self._fault_callback is not None:
+                self._fault_callback(relay.registration, error)
+        finally:
+            with self._lock:
+                if self._active is relay:
+                    self.faulted.set()
 
     def _on_finished(
         self, relay: _RelaySession, completed: bool, error: BaseException | None
@@ -199,9 +242,11 @@ class SessionManager:
             if completed:
                 self._state = SessionState.IDLE
                 self._last_error = None
+                self.faulted.clear()
             else:
                 self._state = SessionState.FAULT
                 self._last_error = str(error) if error is not None else "session aborted"
+                self.faulted.set()
 
 
 class _RelaySession:
@@ -212,6 +257,7 @@ class _RelaySession:
         listener: socket.socket,
         journal: JournalWriter,
         on_state: Callable[[_RelaySession, SessionState], None],
+        on_fault: Callable[[_RelaySession, BaseException], None],
         on_finished: Callable[[_RelaySession, bool, BaseException | None], None],
     ) -> None:
         self.registration = registration
@@ -219,6 +265,7 @@ class _RelaySession:
         self._listener = listener
         self._journal = journal
         self._on_state = on_state
+        self._on_fault = on_fault
         self._on_finished = on_finished
         self._stop = threading.Event()
         self._close_requested = threading.Event()
@@ -226,6 +273,7 @@ class _RelaySession:
         self._socket_lock = threading.Lock()
         self._failure_lock = threading.Lock()
         self._failure: BaseException | None = None
+        self._fault_notified = False
         self._client: socket.socket | None = None
         self._upstream: socket.socket | None = None
         self._thread = threading.Thread(
@@ -313,17 +361,22 @@ class _RelaySession:
             completed = True
         except BaseException as error:
             failure = error
-            self._on_state(self, SessionState.FAULT)
+            if self._forced.is_set():
+                self._on_state(self, SessionState.FAULT)
+            else:
+                self._notify_failure(error)
         finally:
             _close_socket(self._listener)
-            self._shutdown_connections()
-            self._close_connections()
             try:
                 self._journal.close()
             except OSError as error:
                 if failure is None:
                     failure = error
                     completed = False
+                    if not self._forced.is_set():
+                        self._notify_failure(error)
+            self._shutdown_connections()
+            self._close_connections()
             self._on_finished(self, completed, failure)
             self.done.set()
 
@@ -395,11 +448,23 @@ class _RelaySession:
                 return
 
     def _record_failure(self, error: BaseException) -> None:
+        first_failure = False
         with self._failure_lock:
             if self._failure is None:
                 self._failure = error
+                first_failure = True
         self._stop.set()
+        if not first_failure or self._forced.is_set():
+            return
+        self._notify_failure(error)
         self._shutdown_connections()
+
+    def _notify_failure(self, error: BaseException) -> None:
+        with self._failure_lock:
+            if self._fault_notified:
+                return
+            self._fault_notified = True
+        self._on_fault(self, error)
 
     def _shutdown_connections(self) -> None:
         with self._socket_lock:

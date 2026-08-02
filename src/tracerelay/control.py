@@ -16,14 +16,28 @@ class ControlProtocolError(ValueError):
 
 
 class ControlClient:
-    def __init__(self, host: str = CONTROL_HOST, port: int = CONTROL_PORT) -> None:
+    def __init__(
+        self,
+        host: str = CONTROL_HOST,
+        port: int = CONTROL_PORT,
+        timeout: float = 10.0,
+    ) -> None:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+        ):
+            raise ValueError("control timeout must be a positive number")
         self.host = host
         self.port = port
+        self.timeout = float(timeout)
 
     def request(self, request: dict[str, Any]) -> dict[str, Any]:
         payload = _encode_message(request)
-        with socket.create_connection((self.host, self.port), timeout=10.0) as connection:
-            connection.settimeout(10.0)
+        with socket.create_connection(
+            (self.host, self.port), timeout=self.timeout
+        ) as connection:
+            connection.settimeout(self.timeout)
             connection.sendall(payload)
             response = _read_message(connection)
         return response
@@ -36,12 +50,18 @@ class ControlServer:
         *,
         host: str = CONTROL_HOST,
         port: int = CONTROL_PORT,
+        after_response: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
     ) -> None:
         if host != CONTROL_HOST:
             raise ValueError(f"control host must be {CONTROL_HOST}")
-        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65_535:
+        if (
+            isinstance(port, bool)
+            or not isinstance(port, int)
+            or not 0 <= port <= 65_535
+        ):
             raise ValueError("control port must be an integer between 0 and 65535")
         self._handler = handler
+        self._after_response = after_response
         self._stop = threading.Event()
         self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -71,6 +91,7 @@ class ControlServer:
                 raise
             with connection:
                 connection.settimeout(10.0)
+                request: dict[str, Any] | None = None
                 try:
                     request = _read_message(connection)
                     response = self._handler(request)
@@ -85,6 +106,8 @@ class ControlServer:
                     connection.sendall(_encode_message(response))
                 except OSError:
                     pass
+                if self._after_response is not None and request is not None:
+                    self._after_response(request, response)
 
     def close(self) -> None:
         self._stop.set()
@@ -108,7 +131,9 @@ def _encode_message(value: dict[str, Any]) -> bytes:
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError) as error:
-        raise ControlProtocolError(f"control message is not JSON serializable: {error}") from error
+        raise ControlProtocolError(
+            f"control message is not JSON serializable: {error}"
+        ) from error
     if len(payload) > CONTROL_MESSAGE_LIMIT:
         raise ControlProtocolError("control message exceeds 64 KiB")
     return payload
