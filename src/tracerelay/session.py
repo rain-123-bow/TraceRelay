@@ -428,7 +428,12 @@ class _RelaySession:
             self.done.set()
 
     def _accept_client(self) -> socket.socket | None:
-        self._listener.settimeout(0.25)
+        try:
+            self._listener.settimeout(0.25)
+        except OSError:
+            if self._stop.is_set():
+                return None
+            raise
         while not self._stop.is_set():
             try:
                 client, _address = self._listener.accept()

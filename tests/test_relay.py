@@ -345,8 +345,11 @@ def test_active_close_disconnects_both_peers_and_seals_cleanly(
         )
 
 
+@pytest.mark.parametrize("_stress_iteration", range(20))
 def test_close_allows_an_inflight_durable_block_to_finish(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _stress_iteration: int,
 ) -> None:
     payload = b"durable-before-close" * 1024
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -378,12 +381,14 @@ def test_close_allows_an_inflight_durable_block_to_finish(
 
     durable = threading.Event()
     release = threading.Event()
+    durable_blocks: list[bytes] = []
     original_append_data = JournalWriter.append_data
 
     def pause_after_durable_write(
         journal: JournalWriter, direction: Direction, data: bytes
     ) -> DataReference:
         reference = original_append_data(journal, direction, data)
+        durable_blocks.append(data)
         durable.set()
         if not release.wait(2.0):
             raise AssertionError("test did not release the durable DATA record")
@@ -408,7 +413,10 @@ def test_close_allows_an_inflight_durable_block_to_finish(
     assert close_thread.is_alive()
     release.set()
     close_thread.join(timeout=3.0)
-    client_eof = client.recv(1)
+    try:
+        client_disconnected = client.recv(1) == b""
+    except ConnectionResetError:
+        client_disconnected = True
     client.close()
     upstream_thread.join(timeout=5.0)
 
@@ -416,14 +424,70 @@ def test_close_allows_an_inflight_durable_block_to_finish(
     assert close_errors == []
     assert close_results[0]["closed"] is True
     assert close_results[0]["state"] == SessionState.IDLE.value
-    assert client_eof == b""
+    assert client_disconnected
     assert not upstream_thread.is_alive()
     assert upstream_errors == []
-    assert upstream_received == [payload]
+    assert len(durable_blocks) == 1
+    assert payload.startswith(durable_blocks[0])
+    assert upstream_received == durable_blocks
     verification = verify_session(registration.session_path)
     assert verification.status == VALID_COMPLETE
-    assert verification.observed_bytes["client_to_upstream"] == len(payload)
-    assert verification.sent_success_bytes["client_to_upstream"] == len(payload)
+    assert verification.observed_bytes["client_to_upstream"] == len(durable_blocks[0])
+    assert verification.sent_success_bytes["client_to_upstream"] == len(
+        durable_blocks[0]
+    )
+
+
+def test_waiting_close_is_normal_when_relay_thread_starts_after_listener_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_relay_thread = threading.Event()
+    listener_closed = threading.Event()
+    starter_threads: list[threading.Thread] = []
+    original_start = session_module._RelaySession.start
+    original_close_socket = session_module._close_socket
+
+    def defer_relay_thread(relay: session_module._RelaySession) -> None:
+        def start_after_close() -> None:
+            if not release_relay_thread.wait(2.0):
+                return
+            original_start(relay)
+
+        starter = threading.Thread(target=start_after_close, daemon=True)
+        starter_threads.append(starter)
+        starter.start()
+
+    def observe_listener_close(connection: socket.socket) -> None:
+        listener_closed.set()
+        original_close_socket(connection)
+
+    monkeypatch.setattr(session_module._RelaySession, "start", defer_relay_thread)
+    monkeypatch.setattr(session_module, "_close_socket", observe_listener_close)
+
+    manager = SessionManager(RuntimePaths.from_root(tmp_path / "runtime"))
+    registration = manager.register(9)
+    close_results: list[dict[str, object]] = []
+    close_errors: list[BaseException] = []
+
+    def close_session() -> None:
+        try:
+            close_results.append(manager.close(timeout=2.0))
+        except BaseException as error:
+            close_errors.append(error)
+
+    close_thread = threading.Thread(target=close_session, daemon=True)
+    close_thread.start()
+    assert listener_closed.wait(1.0)
+    release_relay_thread.set()
+    close_thread.join(timeout=3.0)
+    for starter in starter_threads:
+        starter.join(timeout=3.0)
+
+    assert not close_thread.is_alive()
+    assert close_errors == []
+    assert close_results[0]["closed"] is True
+    assert close_results[0]["state"] == SessionState.IDLE.value
+    assert verify_session(registration.session_path).status == VALID_COMPLETE
 
 
 def test_journal_write_failure_never_forwards_the_unflushed_block(
