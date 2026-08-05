@@ -367,7 +367,7 @@ def _new_session(tmp_path: Path) -> Path:
                     JOURNAL_LIMIT_BYTES + SESSION_ADMISSION_RESERVE_BYTES
                 ),
                 "upstream_connect_timeout_seconds": 10.0,
-                "single_client": True,
+                "single_client": False,
             },
         },
     )

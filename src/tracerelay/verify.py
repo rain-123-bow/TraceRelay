@@ -1,4 +1,4 @@
-"""Read-only, byte-level verifier for TraceRelay v1 session evidence."""
+"""Read-only, byte-level verifier for TraceRelay session evidence."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from .config import (
 from .journal import (
     HASH_SIZE,
     JOURNAL_HEADER,
+    JOURNAL_HEADER_V1,
     JOURNAL_MAGIC,
     ZERO_HASH,
     Direction,
@@ -41,6 +42,7 @@ class VerificationResult:
     observed_bytes: dict[str, int]
     sent_success_bytes: dict[str, int]
     final_hash: str
+    observed_connection_count: int = 0
     sent_error_bytes: dict[str, int] = field(default_factory=dict)
     unknown_bytes: dict[str, int] = field(default_factory=dict)
     problem: str | None = None
@@ -56,6 +58,7 @@ class VerificationResult:
             "sent_error_bytes": dict(self.sent_error_bytes),
             "unknown_bytes": dict(self.unknown_bytes),
             "final_hash": self.final_hash,
+            "observed_connection_count": self.observed_connection_count,
         }
         if self.problem is not None:
             result["problem"] = self.problem
@@ -68,6 +71,7 @@ class VerificationResult:
 
 @dataclass(slots=True)
 class _DataState:
+    connection_id: int
     direction: Direction
     stream_offset: int
     length: int
@@ -85,6 +89,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
     try:
         session = _read_json_object(session_dir / "session.json")
         _validate_session_metadata(session)
+        session_version = session["format_version"]
     except (OSError, ValueError, json.JSONDecodeError) as error:
         return VerificationResult(
             INVALID,
@@ -123,36 +128,57 @@ def verify_session(session_directory: Path) -> VerificationResult:
     expected_sequence = 1
     previous_hash = ZERO_HASH
     records: dict[int, _DataState] = {}
+    stream_offsets: dict[tuple[int, Direction], int] = {}
     offset = 0
     tail_problem: str | None = None
     tail_offset: int | None = None
 
     with stream:
+        header_struct = JOURNAL_HEADER_V1 if session_version == 1 else JOURNAL_HEADER
         while True:
             record_offset = offset
-            header = stream.read(JOURNAL_HEADER.size)
+            header = stream.read(header_struct.size)
             if not header:
                 break
-            if len(header) != JOURNAL_HEADER.size:
+            if len(header) != header_struct.size:
                 tail_problem = "truncated record header"
                 tail_offset = record_offset
                 break
             offset += len(header)
             try:
-                (
-                    magic,
-                    version,
-                    record_type_value,
-                    direction_value,
-                    sequence,
-                    _utc_ns,
-                    _monotonic_ns,
-                    related_sequence,
-                    stream_offset,
-                    payload_length,
-                    result_code,
-                    recorded_previous_hash,
-                ) = JOURNAL_HEADER.unpack(header)
+                unpacked = header_struct.unpack(header)
+                if session_version == 1:
+                    (
+                        magic,
+                        version,
+                        record_type_value,
+                        direction_value,
+                        sequence,
+                        _utc_ns,
+                        _monotonic_ns,
+                        related_sequence,
+                        stream_offset,
+                        payload_length,
+                        result_code,
+                        recorded_previous_hash,
+                    ) = unpacked
+                    connection_id = 1
+                else:
+                    (
+                        magic,
+                        version,
+                        record_type_value,
+                        direction_value,
+                        connection_id,
+                        sequence,
+                        _utc_ns,
+                        _monotonic_ns,
+                        related_sequence,
+                        stream_offset,
+                        payload_length,
+                        result_code,
+                        recorded_previous_hash,
+                    ) = unpacked
                 record_type = RecordType(record_type_value)
                 direction = Direction(direction_value)
             except (ValueError, TypeError) as error:
@@ -166,7 +192,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
                     records=records,
                 )
 
-            if magic != JOURNAL_MAGIC or version != FORMAT_VERSION:
+            if magic != JOURNAL_MAGIC or version != session_version:
                 return _invalid(
                     expected_sequence - 1,
                     observed,
@@ -228,6 +254,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
 
             problem = _accept_record(
                 record_type=record_type,
+                connection_id=connection_id,
                 direction=direction,
                 sequence=sequence,
                 related_sequence=related_sequence,
@@ -235,6 +262,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
                 payload=payload,
                 result_code=result_code,
                 records=records,
+                stream_offsets=stream_offsets,
                 observed=observed,
                 sent_success=sent_success,
             )
@@ -253,6 +281,9 @@ def verify_session(session_directory: Path) -> VerificationResult:
             expected_sequence += 1
 
     record_count = expected_sequence - 1
+    observed_connection_count = len(
+        {state.connection_id for state in records.values()}
+    )
     sent_error, unknown = _terminal_byte_counts(records)
     complete_path = session_dir / "complete.json"
     if tail_problem is not None:
@@ -275,6 +306,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
             observed,
             sent_success,
             previous_hash.hex(),
+            observed_connection_count=observed_connection_count,
             sent_error_bytes=sent_error,
             unknown_bytes=unknown,
             problem=tail_problem,
@@ -293,6 +325,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
             observed,
             sent_success,
             previous_hash.hex(),
+            observed_connection_count=observed_connection_count,
             sent_error_bytes=sent_error,
             unknown_bytes=unknown,
             problem=problem,
@@ -329,6 +362,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
         observed,
         sent_success,
         previous_hash.hex(),
+        observed_connection_count=observed_connection_count,
         sent_error_bytes=sent_error,
         unknown_bytes=unknown,
     )
@@ -337,6 +371,7 @@ def verify_session(session_directory: Path) -> VerificationResult:
 def _accept_record(
     *,
     record_type: RecordType,
+    connection_id: int,
     direction: Direction,
     sequence: int,
     related_sequence: int,
@@ -344,19 +379,30 @@ def _accept_record(
     payload: bytes,
     result_code: int,
     records: dict[int, _DataState],
+    stream_offsets: dict[tuple[int, Direction], int],
     observed: dict[str, int],
     sent_success: dict[str, int],
 ) -> str | None:
+    if type(connection_id) is not int or not 1 <= connection_id <= 2**64 - 1:
+        return "connection_id is invalid"
     label = direction.label
     if record_type is RecordType.DATA:
         if not payload:
             return "DATA payload is empty"
         if related_sequence != 0 or result_code != 0:
             return "DATA contains result-only fields"
-        if stream_offset != observed[label]:
-            return "direction stream offset is not contiguous"
+        stream_key = (connection_id, direction)
+        expected_offset = stream_offsets.get(stream_key, 0)
+        if stream_offset != expected_offset:
+            return "connection direction stream offset is not contiguous"
+        stream_offsets[stream_key] = expected_offset + len(payload)
         observed[label] += len(payload)
-        records[sequence] = _DataState(direction, stream_offset, len(payload))
+        records[sequence] = _DataState(
+            connection_id,
+            direction,
+            stream_offset,
+            len(payload),
+        )
         return None
 
     if payload:
@@ -366,8 +412,12 @@ def _accept_record(
         return "send result references missing DATA"
     if data.terminal is not None:
         return "DATA has more than one terminal send result"
-    if data.direction is not direction or data.stream_offset != stream_offset:
-        return "send result does not match its DATA direction or offset"
+    if (
+        data.connection_id != connection_id
+        or data.direction is not direction
+        or data.stream_offset != stream_offset
+    ):
+        return "send result does not match its DATA connection, direction, or offset"
     if record_type is RecordType.SEND_OK:
         if result_code != 0:
             return "SEND_OK has a non-zero result code"
@@ -391,7 +441,7 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 def _validate_session_metadata(session: dict[str, Any]) -> None:
     if type(session.get("format_version")) is not int:
         raise ValueError("format_version must be an integer")
-    if session["format_version"] != FORMAT_VERSION:
+    if session["format_version"] not in {1, FORMAT_VERSION}:
         raise ValueError("unsupported format_version")
     session_id = session.get("session_id")
     if not isinstance(session_id, str):
@@ -437,8 +487,11 @@ def _validate_session_metadata(session: dict[str, Any]) -> None:
         or float(upstream_timeout) != UPSTREAM_CONNECT_TIMEOUT_SECONDS
     ):
         raise ValueError("limits.upstream_connect_timeout_seconds is invalid")
-    if limits.get("single_client") is not True:
-        raise ValueError("limits.single_client must be true")
+    expected_single_client = session["format_version"] == 1
+    if limits.get("single_client") is not expected_single_client:
+        raise ValueError(
+            "limits.single_client does not match the evidence format version"
+        )
 
 
 def _reject_json_constant(value: str) -> object:
@@ -458,7 +511,7 @@ def _validate_completion(
 ) -> None:
     if type(complete.get("format_version")) is not int:
         raise ValueError("format_version must be an integer")
-    if complete["format_version"] != FORMAT_VERSION:
+    if complete["format_version"] != session["format_version"]:
         raise ValueError("unsupported format_version")
     if complete.get("session_id") != session["session_id"]:
         raise ValueError("session_id mismatch")
@@ -542,6 +595,9 @@ def _invalid(
         dict(observed),
         dict(sent_success),
         final_hash.hex(),
+        observed_connection_count=len(
+            {state.connection_id for state in (records or {}).values()}
+        ),
         sent_error_bytes=sent_error,
         unknown_bytes=unknown,
         problem=problem,

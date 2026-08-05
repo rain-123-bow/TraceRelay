@@ -159,7 +159,7 @@ class SessionManager:
                         "journal_limit_bytes": self._journal_limit_bytes,
                         "admission_required_free_bytes": self._admission_required_bytes,
                         "upstream_connect_timeout_seconds": UPSTREAM_CONNECT_TIMEOUT_SECONDS,
-                        "single_client": True,
+                        "single_client": False,
                     },
                 }
                 atomic_write_json(session_path / "session.json", metadata)
@@ -167,7 +167,7 @@ class SessionManager:
                     session_path / "journal.trr",
                     max_bytes=self._journal_limit_bytes,
                 )
-                listener.listen(1)
+                listener.listen()
                 registration = SessionRegistration(
                     session_id=session_id,
                     proxy_host=CONTROL_HOST,
@@ -296,6 +296,15 @@ class SessionManager:
                 self.faulted.set()
 
 
+@dataclass(slots=True)
+class _ConnectionState:
+    connection_id: int
+    client: socket.socket
+    upstream: socket.socket | None = None
+    phase: SessionState = SessionState.CONNECTING
+    thread: threading.Thread | None = None
+
+
 class _RelaySession:
     def __init__(
         self,
@@ -321,8 +330,9 @@ class _RelaySession:
         self._failure_lock = threading.Lock()
         self._failure: BaseException | None = None
         self._fault_notified = False
-        self._client: socket.socket | None = None
-        self._upstream: socket.socket | None = None
+        self._connections: dict[int, _ConnectionState] = {}
+        self._next_connection_id = 1
+        self._accepted_connections = 0
         self._thread = threading.Thread(
             target=self._run,
             name=f"TraceRelay-{registration.session_id}",
@@ -336,66 +346,39 @@ class _RelaySession:
         self._close_requested.set()
         self._stop.set()
         _close_socket(self._listener)
+        self._shutdown_connections(close=True, connecting_only=True)
 
     def force_abort(self) -> None:
         self._forced.set()
         self.request_close()
-        self._shutdown_connections()
+        self._shutdown_connections(close=True)
 
     def _run(self) -> None:
         completed = False
         failure: BaseException | None = None
         try:
-            client = self._accept_client()
-            if client is None:
-                if self._forced.is_set():
-                    raise SessionError("session was forcibly aborted while waiting")
-                self._seal("close_requested_waiting")
-                completed = True
-                return
-
-            self._on_state(self, SessionState.CONNECTING)
-            if self._close_requested.is_set():
-                self._seal("close_requested_connecting")
-                completed = True
-                return
-
             try:
-                upstream = socket.create_connection(
-                    (self.registration.upstream_host, self.registration.upstream_port),
-                    timeout=UPSTREAM_CONNECT_TIMEOUT_SECONDS,
-                )
+                self._listener.settimeout(0.25)
             except OSError:
-                if self._close_requested.is_set() and not self._forced.is_set():
-                    self._seal("close_requested_connecting")
-                    completed = True
-                    return
-                raise
-            upstream.settimeout(None)
-            with self._socket_lock:
-                self._upstream = upstream
-            if self._close_requested.is_set():
-                self._shutdown_connections()
+                if not self._stop.is_set():
+                    raise
 
-            self._on_state(self, SessionState.RELAYING)
-            workers = [
-                threading.Thread(
-                    target=self._relay,
-                    args=(client, upstream, Direction.CLIENT_TO_UPSTREAM),
-                    name="TraceRelay-client-to-upstream",
-                    daemon=True,
-                ),
-                threading.Thread(
-                    target=self._relay,
-                    args=(upstream, client, Direction.UPSTREAM_TO_CLIENT),
-                    name="TraceRelay-upstream-to-client",
-                    daemon=True,
-                ),
-            ]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join()
+            while not self._stop.is_set():
+                try:
+                    client, _address = self._listener.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    if self._stop.is_set():
+                        break
+                    raise
+                if self._stop.is_set():
+                    _close_socket(client)
+                    break
+                client.settimeout(None)
+                self._start_connection(client)
+
+            self._join_connections()
 
             with self._failure_lock:
                 failure = self._failure
@@ -403,7 +386,13 @@ class _RelaySession:
                 raise failure
             if self._forced.is_set():
                 raise SessionError("session was forcibly aborted")
-            reason = "close_requested" if self._close_requested.is_set() else "peer_eof"
+            if not self._close_requested.is_set():
+                raise SessionError("session listener stopped without an explicit close")
+            reason = (
+                "close_requested"
+                if self._accepted_connections
+                else "close_requested_waiting"
+            )
             self._seal(reason)
             completed = True
         except BaseException as error:
@@ -413,7 +402,11 @@ class _RelaySession:
             else:
                 self._notify_failure(error)
         finally:
+            self._stop.set()
             _close_socket(self._listener)
+            if failure is not None or self._forced.is_set():
+                self._shutdown_connections(close=True)
+            self._join_connections()
             try:
                 self._journal.close()
             except OSError as error:
@@ -422,36 +415,141 @@ class _RelaySession:
                     completed = False
                     if not self._forced.is_set():
                         self._notify_failure(error)
-            self._shutdown_connections()
             self._close_connections()
             self._on_finished(self, completed, failure)
             self.done.set()
 
-    def _accept_client(self) -> socket.socket | None:
+    def _start_connection(self, client: socket.socket) -> None:
+        with self._socket_lock:
+            connection_id = self._next_connection_id
+            self._next_connection_id += 1
+            self._accepted_connections += 1
+            connection = _ConnectionState(connection_id, client)
+            worker = threading.Thread(
+                target=self._run_connection,
+                args=(connection,),
+                name=f"TraceRelay-connection-{connection_id}",
+                daemon=True,
+            )
+            connection.thread = worker
+            self._connections[connection_id] = connection
         try:
-            self._listener.settimeout(0.25)
-        except OSError:
-            if self._stop.is_set():
-                return None
-            raise
-        while not self._stop.is_set():
-            try:
-                client, _address = self._listener.accept()
-            except TimeoutError:
-                continue
-            except OSError:
-                if self._stop.is_set():
-                    return None
-                raise
-            _close_socket(self._listener)
-            client.settimeout(None)
+            worker.start()
+        except BaseException:
             with self._socket_lock:
-                self._client = client
-            return client
-        return None
+                self._connections.pop(connection_id, None)
+            _close_socket(client)
+            raise
+        self._publish_aggregate_state()
+
+    def _run_connection(self, connection: _ConnectionState) -> None:
+        try:
+            if self._stop.is_set():
+                return
+            upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            upstream.settimeout(UPSTREAM_CONNECT_TIMEOUT_SECONDS)
+            with self._socket_lock:
+                current = self._connections.get(connection.connection_id)
+                if current is not connection:
+                    _close_socket(upstream)
+                    return
+                connection.upstream = upstream
+            if self._stop.is_set():
+                return
+            upstream.connect(
+                (self.registration.upstream_host, self.registration.upstream_port)
+            )
+            upstream.settimeout(None)
+            if self._stop.is_set():
+                return
+            self._set_connection_phase(connection, SessionState.RELAYING)
+            workers = [
+                threading.Thread(
+                    target=self._relay,
+                    args=(
+                        connection.connection_id,
+                        connection.client,
+                        upstream,
+                        Direction.CLIENT_TO_UPSTREAM,
+                    ),
+                    name=(
+                        f"TraceRelay-{connection.connection_id}-client-to-upstream"
+                    ),
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=self._relay,
+                    args=(
+                        connection.connection_id,
+                        upstream,
+                        connection.client,
+                        Direction.UPSTREAM_TO_CLIENT,
+                    ),
+                    name=(
+                        f"TraceRelay-{connection.connection_id}-upstream-to-client"
+                    ),
+                    daemon=True,
+                ),
+            ]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+        except BaseException as error:
+            if not self._stop.is_set():
+                self._record_failure(error)
+        finally:
+            _close_socket(connection.client)
+            if connection.upstream is not None:
+                _close_socket(connection.upstream)
+            with self._socket_lock:
+                if self._connections.get(connection.connection_id) is connection:
+                    del self._connections[connection.connection_id]
+            self._publish_aggregate_state()
+
+    def _set_connection_phase(
+        self,
+        connection: _ConnectionState,
+        phase: SessionState,
+    ) -> None:
+        with self._socket_lock:
+            if self._connections.get(connection.connection_id) is not connection:
+                return
+            connection.phase = phase
+        self._publish_aggregate_state()
+
+    def _publish_aggregate_state(self) -> None:
+        if self._stop.is_set():
+            return
+        with self._socket_lock:
+            phases = {connection.phase for connection in self._connections.values()}
+        if SessionState.RELAYING in phases:
+            state = SessionState.RELAYING
+        elif SessionState.CONNECTING in phases:
+            state = SessionState.CONNECTING
+        else:
+            state = SessionState.WAITING
+        self._on_state(self, state)
+
+    def _join_connections(self) -> None:
+        while True:
+            with self._socket_lock:
+                workers = [
+                    connection.thread
+                    for connection in self._connections.values()
+                    if connection.thread is not None
+                ]
+            if not workers:
+                return
+            for worker in workers:
+                worker.join(timeout=0.25)
 
     def _relay(
-        self, source: socket.socket, destination: socket.socket, direction: Direction
+        self,
+        connection_id: int,
+        source: socket.socket,
+        destination: socket.socket,
+        direction: Direction,
     ) -> None:
         while not self._stop.is_set():
             try:
@@ -477,7 +575,11 @@ class _RelaySession:
                 return
 
             try:
-                reference = self._journal.append_data(direction, payload)
+                reference = self._journal.append_data(
+                    direction,
+                    payload,
+                    connection_id=connection_id,
+                )
             except BaseException as error:
                 self._record_failure(error)
                 return
@@ -508,8 +610,9 @@ class _RelaySession:
         self._stop.set()
         if not first_failure or self._forced.is_set():
             return
+        _close_socket(self._listener)
         self._notify_failure(error)
-        self._shutdown_connections()
+        self._shutdown_connections(close=True)
 
     def _notify_failure(self, error: BaseException) -> None:
         with self._failure_lock:
@@ -518,21 +621,35 @@ class _RelaySession:
             self._fault_notified = True
         self._on_fault(self, error)
 
-    def _shutdown_connections(self) -> None:
+    def _shutdown_connections(
+        self,
+        *,
+        close: bool = False,
+        connecting_only: bool = False,
+    ) -> None:
         with self._socket_lock:
-            sockets = (self._client, self._upstream)
-        for connection in sockets:
-            if connection is not None:
-                _shutdown_socket(connection, socket.SHUT_RDWR)
+            sockets = [
+                connection_socket
+                for connection in self._connections.values()
+                if not connecting_only or connection.phase is SessionState.CONNECTING
+                for connection_socket in (connection.client, connection.upstream)
+                if connection_socket is not None
+            ]
+        for connection_socket in sockets:
+            _shutdown_socket(connection_socket, socket.SHUT_RDWR)
+            if close:
+                _close_socket(connection_socket)
 
     def _close_connections(self) -> None:
         with self._socket_lock:
-            sockets = (self._client, self._upstream)
-            self._client = None
-            self._upstream = None
-        for connection in sockets:
-            if connection is not None:
-                _close_socket(connection)
+            sockets = [
+                connection_socket
+                for connection in self._connections.values()
+                for connection_socket in (connection.client, connection.upstream)
+                if connection_socket is not None
+            ]
+        for connection_socket in sockets:
+            _close_socket(connection_socket)
 
     def _seal(self, reason: str) -> None:
         summary = self._journal.summary()

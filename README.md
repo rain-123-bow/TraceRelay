@@ -8,7 +8,8 @@ later independent verification.
 
 Milestone M3 is implemented, completing the scoped TraceRelay v1 runtime:
 
-- one loopback TCP session at a time;
+- one registered loopback application session at a time;
+- multiple sequential or concurrent TCP connections through one stable proxy endpoint until explicit close;
 - durable, hash-chained traffic evidence written before forwarding;
 - independent read-only session verification;
 - a detached Supervisor and managed Relay Service with bidirectional heartbeats;
@@ -62,5 +63,5 @@ old evidence is never automatically deleted, rotated, repaired, or resumed.
 - PowerShell 7.x Core for repository gates
 - no third-party runtime dependency
 
-The first version supports one trusted local user and one loopback TCP session.
+The first version supports one trusted local user and one registered loopback application session.
 It is an evidence aid, not a hostile-user security or non-repudiation product.

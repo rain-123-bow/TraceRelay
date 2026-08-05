@@ -6,7 +6,7 @@ Current v1 design:
 - `v1/IMPLEMENTATION_PLAN.md`
 - `v1/DESIGN_REVIEW.md`
 
-The active design targets one trusted Windows user, one local TCP session, one
+The active design targets one trusted Windows user, one registered local application session, one
 durable evidence journal, one monitor, and one read-only verifier.
 
 The former high-assurance design remains available in Git commit

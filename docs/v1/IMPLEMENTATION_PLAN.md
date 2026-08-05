@@ -13,7 +13,7 @@ CLI
         v
 Supervisor  <----心跳管道---->  Relay Service
                                   ├─ 本地控制端口
-                                  ├─ 单会话 TCP 代理
+                                  ├─ 单应用会话、多连接 TCP 代理
                                   └─ 证据写入
 
 离线命令：verify <session_dir>
@@ -40,10 +40,10 @@ Supervisor  <----心跳管道---->  Relay Service
 | 证据日志 | 一个固定头部、原始载荷、SHA-256 哈希链的二进制追加文件 |
 | 元数据 | 小型 UTF-8 JSON；临时文件写完后 `os.replace` |
 | 持久刷新 | 文件 `flush()` 后 `os.fsync()` |
-| 并发 | 两个方向各一个线程；共享日志写锁；不使用异步框架 |
+| 并发 | 一个 accept 线程；每个连接两个方向线程；共享日志写锁；不使用异步框架 |
 | 测试 | pytest；必要的故障点使用显式注入，不构建通用注入框架 |
 
-选择线程的原因：v1 只有一个本地会话和两个字节方向，阻塞套接字更少代码，更容易审查故障顺序。
+选择线程的原因：v1 只有一个本地应用会话；每个连接仍是两个阻塞字节方向；无需引入异步框架或通用 Worker 层。
 
 ## 3. 控制模型
 
@@ -75,18 +75,23 @@ Service 对控制端口的独占绑定同时充当单实例锁。v1 不保存 PI
 只使用五个状态：
 
 ```text
-IDLE -> WAITING -> CONNECTING -> RELAYING -> IDLE
-                  \-> FAULT ----------^
+IDLE -> WAITING -> CONNECTING -> RELAYING
+          ^             |           |
+          +-------------+-----------+
+          |                         |
+          +--- explicit close ---> IDLE
+          \------ fatal error ----> FAULT
 ```
 
 - `register`：`IDLE -> WAITING`。
-- 客户端接入：立即关闭监听端口，`WAITING -> CONNECTING`。
+- 客户端接入：保持监听端口，新增连接进入 `CONNECTING`。
 - 上游连接成功：`CONNECTING -> RELAYING`。
-- 正常 EOF、`close` 或 `stop`：封口后回到 `IDLE`。
+- 单个连接正常 EOF：只结束该连接；无其他活动连接时回到 `WAITING`。
+- `close` 或 `stop`：停止 accept，等待已接受连接静止，封口后回到 `IDLE`。
 - 任意证据、监控或代理致命错误：进入 `FAULT`，报警、断链、退出。
 - Service 重启永远从 `IDLE` 开始；旧会话不恢复、不续写。
 
-状态机不保留等待队列、重试树和恢复分支。
+并发状态按全体连接聚合：存在转发连接时为 `RELAYING`；否则存在建连连接时为 `CONNECTING`；否则为 `WAITING`。状态机不保留应用队列、重试树和恢复分支。
 
 ## 5. 证据格式
 
@@ -109,6 +114,7 @@ IDLE -> WAITING -> CONNECTING -> RELAYING -> IDLE
 
 - magic 和版本；
 - 记录类型：`DATA`、`SEND_OK`、`SEND_ERROR`；
+- 正整数 `connection_id`；
 - 方向；
 - 全局序号；
 - UTC 纳秒和单调时钟纳秒；
@@ -129,7 +135,7 @@ IDLE -> WAITING -> CONNECTING -> RELAYING -> IDLE
 
 若进程在步骤 2 后、步骤 3 前退出，校验器将对应数据报告为 `UNKNOWN`。系统不猜测实际结果。
 
-每个方向维护独立流偏移。日志全局序号只用于确定记录顺序，不声称两个方向在远端的业务先后关系。
+每个连接、每个方向维护独立流偏移。日志全局序号只用于确定记录顺序，不声称不同连接或方向在远端的业务先后关系。当前写入格式为 v2；只读校验器继续支持既有单连接 v1 证据。
 
 ## 6. 监控和报警
 
@@ -160,9 +166,9 @@ Supervisor 每秒向 Service 发送心跳。Service 每秒回传当前状态和�
 检查顺序：
 
 1. `session.json` 存在且字段有效。
-2. 每条完整记录的长度、版本、序号、方向、偏移和哈希链有效。
-3. `SEND_OK` / `SEND_ERROR` 只关联已存在的 `DATA`，且一个 `DATA` 最多一个终态。
-4. 记录重建后的两个方向字节流和计数。
+2. 每条完整记录的长度、版本、序号、`connection_id`、方向、连接内偏移和哈希链有效。
+3. `SEND_OK` / `SEND_ERROR` 只关联同一连接中已存在的 `DATA`，且一个 `DATA` 最多一个终态。
+4. 按连接和方向重建字节流，同时汇总方向计数。
 5. `complete.json` 存在时，最终序号、哈希和计数必须完全匹配。
 
 结果：
@@ -200,6 +206,7 @@ tests/
   test_journal.py
   test_control.py
   test_relay.py
+  test_multiconnection.py
   test_monitoring.py
   test_cli.py
 ```
@@ -224,7 +231,7 @@ tests/
 
 1. 实现配置、路径和原子 JSON 写入。
 2. 实现日志写入器和独立校验器。
-3. 实现前台 Service：`register`、单连接、上游连接、双向转发、正常封口。
+3. 实现前台 Service：`register`、应用会话、上游连接、双向转发、显式正常封口。
 4. 实现 `status`、`register`、`close`、`verify` CLI。
 
 验收：前台模式下完成一次随机二进制双向通信；日志可重建；校验结果为 `VALID_COMPLETE`。
@@ -246,7 +253,7 @@ tests/
 状态：已完成。
 
 1. 实现日志限额和准入空间检查。
-2. 完成第二会话、第二连接、重连、截断、篡改和重启测试。
+2. 完成第二会话、顺序/并发连接、截断、篡改和重启测试。
 3. 完成 Windows wheel 安装、CLI 冒烟和全套测试。
 4. 删除实现过程中发现但未使用的代码和配置。
 

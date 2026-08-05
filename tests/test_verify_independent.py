@@ -14,7 +14,8 @@ from tracerelay.session import SessionManager, SessionState
 from tracerelay.verify import INVALID, VALID_COMPLETE, VALID_INCOMPLETE, verify_session
 
 
-HEADER = struct.Struct("<4sHBBQQQQQIi32s")
+HEADER = struct.Struct("<4sHBBQQQQQQIi32s")
+LEGACY_HEADER = struct.Struct("<4sHBBQQQQQIi32s")
 ZERO_HASH = bytes(32)
 SESSION_ID = "20260801T000000.000000Z_12345678123446789abcdef012345678"
 
@@ -61,7 +62,8 @@ def test_independent_parser_rebuilds_real_relay_bytes_by_direction(
     assert errors == []
     assert received == [request]
     assert reply == response
-    _wait_for_state(manager, SessionState.IDLE)
+    _wait_for_state(manager, SessionState.WAITING)
+    manager.close(timeout=2.0)
 
     rebuilt = _independently_rebuild_streams(
         registration.session_path / "journal.trr"
@@ -115,7 +117,7 @@ def test_independent_known_bytes_verify_as_complete(tmp_path: Path) -> None:
     _write_json(
         session_dir / "complete.json",
         {
-            "format_version": 1,
+            "format_version": 2,
             "session_id": SESSION_ID,
             "closed_at_utc": "2026-08-01T00:00:01.000000Z",
             "end_reason": "test",
@@ -134,8 +136,8 @@ def test_independent_known_bytes_verify_as_complete(tmp_path: Path) -> None:
 
     result = verify_session(session_dir)
 
-    assert HEADER.size == 88
-    assert len(first) == 120 + len(b"\x00request\xff")
+    assert HEADER.size == 96
+    assert len(first) == 128 + len(b"\x00request\xff")
     assert result.status == VALID_COMPLETE
     assert result.record_count == 4
     assert result.final_hash == final_hash.hex()
@@ -168,8 +170,119 @@ def test_independent_semantic_error_hits_direction_check(tmp_path: Path) -> None
     result = verify_session(session_dir)
 
     assert result.status == INVALID
-    assert result.problem == "send result does not match its DATA direction or offset"
+    assert result.problem == (
+        "send result does not match its DATA connection, direction, or offset"
+    )
     assert result.problem_offset == len(data)
+
+
+def test_send_result_cannot_change_its_data_connection_id(tmp_path: Path) -> None:
+    session_dir = _write_session_metadata(tmp_path)
+    data, data_hash = _record(
+        sequence=1,
+        record_type=1,
+        direction=1,
+        related_sequence=0,
+        stream_offset=0,
+        payload=b"payload",
+        result_code=0,
+        previous_hash=ZERO_HASH,
+        connection_id=1,
+    )
+    wrong_result, _final_hash = _record(
+        sequence=2,
+        record_type=2,
+        direction=1,
+        related_sequence=1,
+        stream_offset=0,
+        payload=b"",
+        result_code=0,
+        previous_hash=data_hash,
+        connection_id=2,
+    )
+    (session_dir / "journal.trr").write_bytes(data + wrong_result)
+
+    result = verify_session(session_dir)
+
+    assert result.status == INVALID
+    assert result.problem == (
+        "send result does not match its DATA connection, direction, or offset"
+    )
+
+
+def test_zero_connection_id_is_invalid(tmp_path: Path) -> None:
+    session_dir = _write_session_metadata(tmp_path)
+    data, _data_hash = _record(
+        sequence=1,
+        record_type=1,
+        direction=1,
+        related_sequence=0,
+        stream_offset=0,
+        payload=b"payload",
+        result_code=0,
+        previous_hash=ZERO_HASH,
+        connection_id=0,
+    )
+    (session_dir / "journal.trr").write_bytes(data)
+
+    result = verify_session(session_dir)
+
+    assert result.status == INVALID
+    assert result.problem == "connection_id is invalid"
+
+
+def test_legacy_v1_evidence_remains_verifiable(tmp_path: Path) -> None:
+    session_dir = _write_session_metadata(tmp_path)
+    session = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
+    session["format_version"] = 1
+    session["limits"]["single_client"] = True
+    _write_json(session_dir / "session.json", session)
+    data, data_hash = _legacy_record(
+        sequence=1,
+        record_type=1,
+        direction=1,
+        related_sequence=0,
+        stream_offset=0,
+        payload=b"legacy",
+        result_code=0,
+        previous_hash=ZERO_HASH,
+    )
+    send_ok, final_hash = _legacy_record(
+        sequence=2,
+        record_type=2,
+        direction=1,
+        related_sequence=1,
+        stream_offset=0,
+        payload=b"",
+        result_code=0,
+        previous_hash=data_hash,
+    )
+    (session_dir / "journal.trr").write_bytes(data + send_ok)
+    _write_json(
+        session_dir / "complete.json",
+        {
+            "format_version": 1,
+            "session_id": SESSION_ID,
+            "closed_at_utc": "2026-08-01T00:00:01.000000Z",
+            "end_reason": "legacy-test",
+            "final_sequence": 2,
+            "final_hash": final_hash.hex(),
+            "observed_bytes": {
+                "client_to_upstream": len(b"legacy"),
+                "upstream_to_client": 0,
+            },
+            "sent_success_bytes": {
+                "client_to_upstream": len(b"legacy"),
+                "upstream_to_client": 0,
+            },
+        },
+    )
+
+    result = verify_session(session_dir)
+
+    assert result.status == VALID_COMPLETE
+    assert result.observed_connection_count == 1
+    assert result.final_hash == final_hash.hex()
 
 
 def test_independent_data_without_result_reports_unknown_bytes(tmp_path: Path) -> None:
@@ -257,7 +370,7 @@ def test_independent_noncontiguous_direction_offset_is_invalid(
     result = verify_session(session_dir)
 
     assert result.status == INVALID
-    assert result.problem == "direction stream offset is not contiguous"
+    assert result.problem == "connection direction stream offset is not contiguous"
     assert result.problem_offset == 0
 
 
@@ -279,7 +392,7 @@ def test_completion_marker_cannot_hide_an_unknown_send_result(
     _write_json(
         session_dir / "complete.json",
         {
-            "format_version": 1,
+            "format_version": 2,
             "session_id": SESSION_ID,
             "closed_at_utc": "2026-08-01T00:00:01.000000Z",
             "end_reason": "forged",
@@ -329,7 +442,7 @@ def test_completion_marker_with_a_truncated_tail_is_invalid(tmp_path: Path) -> N
     _write_json(
         session_dir / "complete.json",
         {
-            "format_version": 1,
+            "format_version": 2,
             "session_id": SESSION_ID,
             "closed_at_utc": "2026-08-01T00:00:01.000000Z",
             "end_reason": "forged",
@@ -381,8 +494,39 @@ def _record(
     payload: bytes,
     result_code: int,
     previous_hash: bytes,
+    connection_id: int = 1,
 ) -> tuple[bytes, bytes]:
     header = HEADER.pack(
+        b"TRR1",
+        2,
+        record_type,
+        direction,
+        connection_id,
+        sequence,
+        1_700_000_000_000_000_000 + sequence,
+        10_000 + sequence,
+        related_sequence,
+        stream_offset,
+        len(payload),
+        result_code,
+        previous_hash,
+    )
+    digest = hashlib.sha256(header + payload).digest()
+    return header + payload + digest, digest
+
+
+def _legacy_record(
+    *,
+    sequence: int,
+    record_type: int,
+    direction: int,
+    related_sequence: int,
+    stream_offset: int,
+    payload: bytes,
+    result_code: int,
+    previous_hash: bytes,
+) -> tuple[bytes, bytes]:
+    header = LEGACY_HEADER.pack(
         b"TRR1",
         1,
         record_type,
@@ -406,7 +550,7 @@ def _write_session_metadata(tmp_path: Path) -> Path:
     _write_json(
         session_dir / "session.json",
         {
-            "format_version": 1,
+            "format_version": 2,
             "session_id": SESSION_ID,
             "created_at_utc": "2026-08-01T00:00:00.000000Z",
             "proxy_host": "127.0.0.1",
@@ -419,7 +563,7 @@ def _write_session_metadata(tmp_path: Path) -> Path:
                 "journal_limit_bytes": 2_147_483_648,
                 "admission_required_free_bytes": 2_164_260_864,
                 "upstream_connect_timeout_seconds": 10.0,
-                "single_client": True,
+                "single_client": False,
             },
         },
     )
@@ -450,6 +594,7 @@ def _independently_rebuild_streams(path: Path) -> dict[int, bytes]:
             version,
             record_type,
             direction,
+            connection_id,
             sequence,
             _utc_ns,
             _monotonic_ns,
@@ -465,7 +610,8 @@ def _independently_rebuild_streams(path: Path) -> dict[int, bytes]:
         offset += 32
 
         assert magic == b"TRR1"
-        assert version == 1
+        assert version == 2
+        assert connection_id == 1
         assert direction in streams
         assert sequence == expected_sequence
         assert recorded_previous_hash == previous_hash

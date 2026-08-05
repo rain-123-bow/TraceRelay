@@ -222,8 +222,13 @@ def test_pipe_close_exits_within_heartbeat_bound_when_session_worker_is_stuck(
         _wait_for_service_state(run.instance, SessionState.RELAYING)
 
         def block_journal_write(
-            _writer: JournalWriter, _direction: Direction, _payload: bytes
+            _writer: JournalWriter,
+            _direction: Direction,
+            _payload: bytes,
+            *,
+            connection_id: int = 1,
         ) -> object:
+            del connection_id
             blocked.set()
             if not release.wait(HEARTBEAT_TIMEOUT_SECONDS):
                 raise AssertionError("test did not release the stuck journal write")
@@ -328,8 +333,13 @@ def test_managed_service_journal_fault_never_forwards_payload(
         _wait_for_service_state(run.instance, SessionState.RELAYING)
 
         def fail_before_write(
-            _writer: JournalWriter, _direction: Direction, _payload: bytes
+            _writer: JournalWriter,
+            _direction: Direction,
+            _payload: bytes,
+            *,
+            connection_id: int = 1,
         ) -> object:
+            del connection_id
             raise OSError("injected journal write failure")
 
         def pause_alarm(*args: object, **kwargs: object) -> object:

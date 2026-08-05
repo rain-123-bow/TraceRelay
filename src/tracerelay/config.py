@@ -11,7 +11,8 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+ALARM_FORMAT_VERSION = 1
 PRODUCT_NAME = "TraceRelay"
 CONTROL_PROTOCOL_VERSION = 1
 CONTROL_HOST = "127.0.0.1"
@@ -136,7 +137,7 @@ def write_alarm(
     atomic_write_json(
         alarm_path,
         {
-            "format_version": FORMAT_VERSION,
+            "format_version": ALARM_FORMAT_VERSION,
             "incident_id": incident_id,
             "created_at_utc": utc_now_text(),
             "source": source,

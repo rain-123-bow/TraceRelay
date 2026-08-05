@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +88,7 @@ def test_wheel_installs_offline_and_all_cli_commands_smoke(tmp_path: Path) -> No
     executable = virtual_environment / "Scripts" / "tracerelay.exe"
     started = False
     stopped = False
+    upstream: _TwoConnectionEcho | None = None
     try:
         _start_result, start = _cli(
             executable, "start", cwd=outside_source, environment=environment
@@ -101,16 +104,21 @@ def test_wheel_installs_offline_and_all_cli_commands_smoke(tmp_path: Path) -> No
         assert status["state"] == "IDLE"
         assert status["mode"] == "managed"
 
+        upstream = _TwoConnectionEcho()
         _register_result, registration = _cli(
             executable,
             "register",
             "--upstream-port",
-            "9",
+            str(upstream.port),
             cwd=outside_source,
             environment=environment,
         )
         assert registration["state"] == "WAITING"
         session_path = Path(registration["session_path"])
+        endpoint = (registration["proxy_host"], registration["proxy_port"])
+        assert _round_trip(endpoint, b"installed-first") == b"echo:installed-first"
+        assert _round_trip(endpoint, b"installed-second") == b"echo:installed-second"
+        upstream.finish()
 
         _close_result, close = _cli(
             executable, "close", cwd=outside_source, environment=environment
@@ -126,7 +134,8 @@ def test_wheel_installs_offline_and_all_cli_commands_smoke(tmp_path: Path) -> No
             environment=environment,
         )
         assert verification["status"] == "VALID_COMPLETE"
-        assert verification["record_count"] == 0
+        assert verification["record_count"] >= 8
+        assert verification["observed_connection_count"] == 2
 
         _stop_result, stop = _cli(
             executable, "stop", cwd=outside_source, environment=environment
@@ -145,6 +154,8 @@ def test_wheel_installs_offline_and_all_cli_commands_smoke(tmp_path: Path) -> No
         assert unavailable_result.stdout == ""
         assert unavailable["state"] == "NOT_RUNNING"
     finally:
+        if upstream is not None:
+            upstream.close()
         if started and not stopped and executable.exists():
             _run(
                 [str(executable), "stop"],
@@ -152,6 +163,71 @@ def test_wheel_installs_offline_and_all_cli_commands_smoke(tmp_path: Path) -> No
                 environment=environment,
                 timeout=15.0,
             )
+
+
+class _TwoConnectionEcho:
+    def __init__(self) -> None:
+        self.errors: list[BaseException] = []
+        self.received: list[bytes] = []
+        self._stop = threading.Event()
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(2)
+        self._listener.settimeout(0.2)
+        self.port = int(self._listener.getsockname()[1])
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            with self._listener:
+                while len(self.received) < 2 and not self._stop.is_set():
+                    try:
+                        connection, _address = self._listener.accept()
+                    except TimeoutError:
+                        continue
+                    with connection:
+                        connection.settimeout(5.0)
+                        payload = _receive_all(connection)
+                        self.received.append(payload)
+                        connection.sendall(b"echo:" + payload)
+                        connection.shutdown(socket.SHUT_WR)
+        except OSError as error:
+            if not self._stop.is_set():
+                self.errors.append(error)
+        except BaseException as error:
+            self.errors.append(error)
+
+    def finish(self) -> None:
+        self._thread.join(timeout=6.0)
+        assert not self._thread.is_alive()
+        assert self.errors == []
+        assert self.received == [b"installed-first", b"installed-second"]
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self._listener.close()
+        except OSError:
+            pass
+        self._thread.join(timeout=2.0)
+
+
+def _round_trip(endpoint: tuple[str, int], payload: bytes) -> bytes:
+    with socket.create_connection(endpoint, timeout=3.0) as connection:
+        connection.settimeout(5.0)
+        connection.sendall(payload)
+        connection.shutdown(socket.SHUT_WR)
+        return _receive_all(connection)
+
+
+def _receive_all(connection: socket.socket) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = connection.recv(32 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _cli(

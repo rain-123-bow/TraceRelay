@@ -1,4 +1,4 @@
-"""Append-only TraceRelay evidence journal writer and frozen v1 format."""
+"""Append-only TraceRelay evidence journal writer."""
 
 from __future__ import annotations
 
@@ -19,9 +19,13 @@ JOURNAL_MAGIC = b"TRR1"
 HASH_SIZE = hashlib.sha256().digest_size
 ZERO_HASH = bytes(HASH_SIZE)
 
-# magic, version, type, direction, sequence, UTC ns, monotonic ns,
-# related DATA sequence, direction offset, payload length, result code, prev hash
-JOURNAL_HEADER = struct.Struct("<4sHBBQQQQQIi32s")
+# v1: magic, version, type, direction, sequence, UTC ns, monotonic ns,
+# related DATA sequence, direction offset, payload length, result code, prev hash.
+JOURNAL_HEADER_V1 = struct.Struct("<4sHBBQQQQQIi32s")
+
+# v2 adds connection_id before sequence. Every record is therefore bound to one
+# application connection while the global sequence and hash chain stay singular.
+JOURNAL_HEADER = struct.Struct("<4sHBBQQQQQQIi32s")
 JOURNAL_RECORD_OVERHEAD = JOURNAL_HEADER.size + HASH_SIZE
 SEND_RESULT_RECORD_SIZE = JOURNAL_RECORD_OVERHEAD
 
@@ -50,6 +54,7 @@ class Direction(IntEnum):
 @dataclass(frozen=True, slots=True)
 class DataReference:
     sequence: int
+    connection_id: int
     direction: Direction
     stream_offset: int
     length: int
@@ -82,7 +87,7 @@ class JournalWriter:
         self._lock = threading.Lock()
         self._sequence = 0
         self._previous_hash = ZERO_HASH
-        self._offsets = {direction: 0 for direction in Direction}
+        self._offsets: dict[tuple[int, Direction], int] = {}
         self._observed = {direction: 0 for direction in Direction}
         self._sent_success = {direction: 0 for direction in Direction}
         self._pending: dict[int, DataReference] = {}
@@ -90,13 +95,20 @@ class JournalWriter:
         self._reserved_result_bytes = 0
         self._closed = False
 
-    def append_data(self, direction: Direction, payload: bytes) -> DataReference:
+    def append_data(
+        self,
+        direction: Direction,
+        payload: bytes,
+        *,
+        connection_id: int = 1,
+    ) -> DataReference:
         if not isinstance(direction, Direction):
             raise TypeError("direction must be a Direction")
         if not isinstance(payload, bytes):
             raise TypeError("payload must be bytes")
         if not payload or len(payload) > READ_CHUNK_SIZE:
             raise ValueError("payload length must be between 1 and READ_CHUNK_SIZE")
+        _validate_connection_id(connection_id)
 
         with self._lock:
             required_bytes = (
@@ -111,17 +123,25 @@ class JournalWriter:
                 raise JournalLimitExceeded(
                     f"journal limit of {self.max_bytes} bytes would be exceeded"
                 )
-            stream_offset = self._offsets[direction]
+            stream_key = (connection_id, direction)
+            stream_offset = self._offsets.get(stream_key, 0)
             sequence = self._write_record_locked(
                 record_type=RecordType.DATA,
+                connection_id=connection_id,
                 direction=direction,
                 related_sequence=0,
                 stream_offset=stream_offset,
                 payload=payload,
                 result_code=0,
             )
-            reference = DataReference(sequence, direction, stream_offset, len(payload))
-            self._offsets[direction] += len(payload)
+            reference = DataReference(
+                sequence,
+                connection_id,
+                direction,
+                stream_offset,
+                len(payload),
+            )
+            self._offsets[stream_key] = stream_offset + len(payload)
             self._observed[direction] += len(payload)
             self._pending[sequence] = reference
             self._reserved_result_bytes += SEND_RESULT_RECORD_SIZE
@@ -132,6 +152,7 @@ class JournalWriter:
             pending = self._require_pending_locked(reference)
             self._write_record_locked(
                 record_type=RecordType.SEND_OK,
+                connection_id=pending.connection_id,
                 direction=pending.direction,
                 related_sequence=pending.sequence,
                 stream_offset=pending.stream_offset,
@@ -152,6 +173,7 @@ class JournalWriter:
             pending = self._require_pending_locked(reference)
             self._write_record_locked(
                 record_type=RecordType.SEND_ERROR,
+                connection_id=pending.connection_id,
                 direction=pending.direction,
                 related_sequence=pending.sequence,
                 stream_offset=pending.stream_offset,
@@ -198,6 +220,7 @@ class JournalWriter:
         self,
         *,
         record_type: RecordType,
+        connection_id: int,
         direction: Direction,
         related_sequence: int,
         stream_offset: int,
@@ -212,6 +235,7 @@ class JournalWriter:
             FORMAT_VERSION,
             int(record_type),
             int(direction),
+            connection_id,
             sequence,
             time.time_ns(),
             time.monotonic_ns(),
@@ -231,3 +255,11 @@ class JournalWriter:
         self._sequence = sequence
         self._previous_hash = current_hash
         return sequence
+
+
+def _validate_connection_id(connection_id: int) -> None:
+    if (
+        type(connection_id) is not int
+        or not 1 <= connection_id <= 2**64 - 1
+    ):
+        raise ValueError("connection_id must be a positive unsigned 64-bit integer")

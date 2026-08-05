@@ -56,7 +56,8 @@ def test_random_binary_round_trip_creates_valid_complete_evidence(
     assert upstream_errors == []
     assert received == [request]
     assert reply == response
-    _wait_for_state(manager, SessionState.IDLE)
+    _wait_for_state(manager, SessionState.WAITING)
+    manager.close(timeout=2.0)
 
     result = verify_session(registration.session_path)
     assert result.status == VALID_COMPLETE
@@ -175,7 +176,7 @@ def test_over_limit_data_is_not_forwarded_and_session_remains_incomplete(
     assert not (registration.session_path / "complete.json").exists()
 
 
-def test_second_client_and_same_session_reconnect_are_rejected(
+def test_active_session_rejects_second_registration_and_closes_explicitly(
     tmp_path: Path,
 ) -> None:
     payload = b"first-client-only"
@@ -189,8 +190,6 @@ def test_second_client_and_same_session_reconnect_are_rejected(
         _wait_for_state(manager, SessionState.RELAYING)
         with pytest.raises(SessionBusyError):
             manager.register(upstream_port)
-        with pytest.raises(OSError):
-            socket.create_connection(endpoint, timeout=1.0)
         assert [path.name for path in manager.paths.sessions.iterdir()] == [
             registration.session_id
         ]
@@ -200,7 +199,9 @@ def test_second_client_and_same_session_reconnect_are_rejected(
     finally:
         first.close()
 
-    _wait_for_state(manager, SessionState.IDLE)
+    _wait_for_state(manager, SessionState.WAITING)
+    assert manager.status()["session_id"] == registration.session_id
+    manager.close(timeout=2.0)
     with pytest.raises(OSError):
         socket.create_connection(endpoint, timeout=1.0)
     upstream_thread.join(timeout=5.0)
@@ -281,7 +282,8 @@ def test_reverse_half_close_keeps_the_other_direction_relaying(
     assert errors == []
     assert reply == response
     assert received == [request]
-    _wait_for_state(manager, SessionState.IDLE)
+    _wait_for_state(manager, SessionState.WAITING)
+    manager.close(timeout=2.0)
 
     result = verify_session(registration.session_path)
     assert result.status == VALID_COMPLETE
@@ -321,11 +323,6 @@ def test_active_close_disconnects_both_peers_and_seals_cleanly(
     )
     client.settimeout(5.0)
     _wait_for_state(manager, SessionState.RELAYING)
-
-    with pytest.raises(OSError):
-        socket.create_connection(
-            (registration.proxy_host, registration.proxy_port), timeout=0.5
-        )
 
     closed = manager.close(timeout=2.0)
     client_eof = client.recv(1)
@@ -385,9 +382,18 @@ def test_close_allows_an_inflight_durable_block_to_finish(
     original_append_data = JournalWriter.append_data
 
     def pause_after_durable_write(
-        journal: JournalWriter, direction: Direction, data: bytes
+        journal: JournalWriter,
+        direction: Direction,
+        data: bytes,
+        *,
+        connection_id: int = 1,
     ) -> DataReference:
-        reference = original_append_data(journal, direction, data)
+        reference = original_append_data(
+            journal,
+            direction,
+            data,
+            connection_id=connection_id,
+        )
         durable_blocks.append(data)
         durable.set()
         if not release.wait(2.0):
@@ -522,8 +528,13 @@ def test_journal_write_failure_never_forwards_the_unflushed_block(
     _wait_for_state(manager, SessionState.RELAYING)
 
     def fail_before_durable_write(
-        _journal: JournalWriter, _direction: Direction, _data: bytes
+        _journal: JournalWriter,
+        _direction: Direction,
+        _data: bytes,
+        *,
+        connection_id: int = 1,
     ) -> DataReference:
+        del connection_id
         raise OSError("injected journal write failure")
 
     monkeypatch.setattr(JournalWriter, "append_data", fail_before_durable_write)
