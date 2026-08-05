@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import socket
+import struct
 import threading
 import time
 from pathlib import Path
@@ -289,6 +290,37 @@ def test_new_upstream_connect_failure_terminates_existing_healthy_connection(
     assert verify_session(registration.session_path).status == VALID_INCOMPLETE
 
 
+def test_connection_reset_is_local_and_a_later_connection_still_succeeds(
+    tmp_path: Path,
+) -> None:
+    upstream = _AbortFirstThenEcho()
+    faults: list[BaseException] = []
+    manager = SessionManager(
+        RuntimePaths.from_root(tmp_path / "runtime"),
+        on_fault=lambda _registration, error: faults.append(error),
+    )
+    registration = manager.register(upstream.port)
+    endpoint = (registration.proxy_host, registration.proxy_port)
+    aborted = socket.create_connection(endpoint, timeout=3.0)
+    aborted.settimeout(3.0)
+    assert upstream.first_accepted.wait(3.0)
+    _wait_for_state(manager, SessionState.RELAYING)
+    aborted.sendall(b"connection-that-upstream-resets")
+    _wait_for_state(manager, SessionState.WAITING)
+    aborted.close()
+
+    assert faults == []
+    assert _round_trip(endpoint, b"after-reset") == b"echo:after-reset"
+    _wait_for_state(manager, SessionState.WAITING)
+    manager.close(timeout=3.0)
+    upstream.finish()
+
+    verification = verify_session(registration.session_path)
+    assert verification.status == VALID_COMPLETE
+    assert verification.observed_connection_count >= 1
+    assert all(value == 0 for value in verification.unknown_bytes.values())
+
+
 class _MultiConnectionEcho:
     def __init__(
         self,
@@ -453,6 +485,45 @@ class _SelectiveEcho:
 
     def finish(self) -> None:
         self._thread.join(timeout=7.0)
+        assert not self._thread.is_alive()
+        assert self.errors == []
+
+
+class _AbortFirstThenEcho:
+    def __init__(self) -> None:
+        self.errors: list[BaseException] = []
+        self.first_accepted = threading.Event()
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.bind((CONTROL_HOST, 0))
+        self._listener.listen(2)
+        self._listener.settimeout(5.0)
+        self.port = int(self._listener.getsockname()[1])
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            with self._listener:
+                first, _address = self._listener.accept()
+                first.setsockopt(
+                    socket.SOL_SOCKET,
+                    socket.SO_LINGER,
+                    struct.pack("hh", 1, 0),
+                )
+                first.close()
+                self.first_accepted.set()
+                second, _address = self._listener.accept()
+                with second:
+                    second.settimeout(5.0)
+                    payload = _receive_all(second)
+                    second.sendall(b"echo:" + payload)
+                    second.shutdown(socket.SHUT_WR)
+        except BaseException as error:
+            self.errors.append(error)
+            self.first_accepted.set()
+
+    def finish(self) -> None:
+        self._thread.join(timeout=6.0)
         assert not self._thread.is_alive()
         assert self.errors == []
 

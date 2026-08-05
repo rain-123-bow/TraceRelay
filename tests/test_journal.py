@@ -206,7 +206,9 @@ def test_forged_completion_marker_is_invalid(tmp_path: Path) -> None:
     assert "final_hash mismatch" in (result.problem or "")
 
 
-def test_completion_after_send_error_is_invalid(tmp_path: Path) -> None:
+def test_completion_after_send_error_is_valid_and_reports_failed_bytes(
+    tmp_path: Path,
+) -> None:
     session_dir = _new_session(tmp_path)
     journal = JournalWriter(session_dir / "journal.trr")
     reference = journal.append_data(Direction.CLIENT_TO_UPSTREAM, b"payload")
@@ -217,9 +219,9 @@ def test_completion_after_send_error_is_invalid(tmp_path: Path) -> None:
 
     result = verify_session(session_dir)
 
-    assert result.status == INVALID
-    assert "failed send" in (result.problem or "")
+    assert result.status == VALID_COMPLETE
     assert result.sent_error_bytes["client_to_upstream"] == len(b"payload")
+    assert all(value == 0 for value in result.unknown_bytes.values())
 
 
 def test_completion_rejects_non_integer_number_types(tmp_path: Path) -> None:

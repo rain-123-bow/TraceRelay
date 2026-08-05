@@ -77,6 +77,7 @@ def test_status_cli_reports_unavailable_on_connection_failure(
             raise ConnectionRefusedError("foreground Service is not running")
 
     monkeypatch.setattr(cli, "ControlClient", UnavailableClient)
+    monkeypatch.setattr(cli, "latest_alarm_summary", lambda _paths: None)
 
     exit_code = cli.main(["status"])
 

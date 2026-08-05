@@ -559,6 +559,11 @@ class _RelaySession:
             except (OSError, ValueError) as error:
                 if self._stop.is_set():
                     return
+                if isinstance(error, OSError) and _is_connection_terminal_error(
+                    error
+                ):
+                    self._terminate_connection(source, destination)
+                    return
                 self._record_failure(error)
                 return
             if not readable or self._stop.is_set():
@@ -567,6 +572,9 @@ class _RelaySession:
                 payload = source.recv(READ_CHUNK_SIZE)
             except OSError as error:
                 if self._stop.is_set():
+                    return
+                if _is_connection_terminal_error(error):
+                    self._terminate_connection(source, destination)
                     return
                 self._record_failure(error)
                 return
@@ -592,6 +600,9 @@ class _RelaySession:
                 except BaseException as journal_error:
                     self._record_failure(journal_error)
                     return
+                if _is_connection_terminal_error(error):
+                    self._terminate_connection(source, destination)
+                    return
                 self._record_failure(error)
                 return
 
@@ -600,6 +611,14 @@ class _RelaySession:
             except BaseException as error:
                 self._record_failure(error)
                 return
+
+    @staticmethod
+    def _terminate_connection(
+        first: socket.socket,
+        second: socket.socket,
+    ) -> None:
+        _shutdown_socket(first, socket.SHUT_RDWR)
+        _shutdown_socket(second, socket.SHUT_RDWR)
 
     def _record_failure(self, error: BaseException) -> None:
         first_failure = False
@@ -686,6 +705,20 @@ def _error_code(error: OSError) -> int:
     if -(2**31) <= code < 2**31:
         return code
     return errno.EIO
+
+
+def _is_connection_terminal_error(error: OSError) -> bool:
+    portable_codes = {
+        errno.ECONNABORTED,
+        errno.ECONNRESET,
+        errno.EPIPE,
+        errno.ENOTCONN,
+        getattr(errno, "ESHUTDOWN", -1),
+    }
+    windows_codes = {10053, 10054, 10057, 10058}
+    return error.errno in portable_codes | windows_codes or getattr(
+        error, "winerror", None
+    ) in windows_codes
 
 
 def _shutdown_socket(connection: socket.socket, how: int) -> None:

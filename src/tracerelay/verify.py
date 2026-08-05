@@ -342,7 +342,6 @@ def verify_session(session_directory: Path) -> VerificationResult:
             observed=observed,
             sent_success=sent_success,
             has_unknown=any(unknown.values()),
-            has_send_error=any(sent_error.values()),
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         return _invalid(
@@ -507,7 +506,6 @@ def _validate_completion(
     observed: dict[str, int],
     sent_success: dict[str, int],
     has_unknown: bool,
-    has_send_error: bool,
 ) -> None:
     if type(complete.get("format_version")) is not int:
         raise ValueError("format_version must be an integer")
@@ -532,8 +530,6 @@ def _validate_completion(
         raise ValueError("end_reason is invalid")
     if has_unknown:
         raise ValueError("completion marker exists with unknown send results")
-    if has_send_error:
-        raise ValueError("completion marker exists after a failed send")
 
 
 def _validate_counts(value: object, expected: dict[str, int], field: str) -> None:

@@ -86,7 +86,7 @@ IDLE -> WAITING -> CONNECTING -> RELAYING
 - `register`：`IDLE -> WAITING`。
 - 客户端接入：保持监听端口，新增连接进入 `CONNECTING`。
 - 上游连接成功：`CONNECTING -> RELAYING`。
-- 单个连接正常 EOF：只结束该连接；无其他活动连接时回到 `WAITING`。
+- 单个连接正常 EOF、reset、abort 或转发失败：记录可用终态后只结束该连接；无其他活动连接时回到 `WAITING`。
 - `close` 或 `stop`：停止 accept，等待已接受连接静止，封口后回到 `IDLE`。
 - 任意证据、监控或代理致命错误：进入 `FAULT`，报警、断链、退出。
 - Service 重启永远从 `IDLE` 开始；旧会话不恢复、不续写。
